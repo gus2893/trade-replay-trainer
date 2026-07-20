@@ -1,0 +1,6 @@
+backend/target/
+backend/data/
+.git/
+.github/
+*.md
+*.bat

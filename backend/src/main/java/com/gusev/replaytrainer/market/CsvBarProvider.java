@@ -31,6 +31,7 @@ import jakarta.annotation.PostConstruct;
  * When a symbol appears in several files, the one with the most days wins.
  */
 @Component
+@org.springframework.context.annotation.DependsOn("cloudDataBootstrap")
 public class CsvBarProvider implements MarketDataProvider {
 
 	private static final Logger log = LoggerFactory.getLogger(CsvBarProvider.class);

@@ -52,6 +52,27 @@ Expected sibling repos (configurable in `backend/src/main/resources/application.
 ../BTC_Paper_Trade_Lab/data/hist_BTC_15m_<days>d.csv
 ```
 
+## Host it (no PC required)
+
+The backend is cloud-ready: `Dockerfile` + `render.yaml` deploy it to Render's free tier.
+In cloud mode (`SPRING_PROFILES_ACTIVE=cloud`) it **fetches its own bars at startup** —
+stocks from Alpaca (150 days × ~22 symbols, keys via env vars, never in the repo), BTC/ETH
+from Coinbase's public API — and **persists its learning** (training log + learned model) to
+a private GitHub repo every 10 minutes, restoring on boot, so redeploys never lose progress.
+Self-play keeps training 24/7 while the service is awake.
+
+One-time setup (~5 min):
+1. render.com → New → Blueprint → connect `gus2893/trade-replay-trainer` (it reads `render.yaml`).
+2. Set env vars: `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` (Alpaca data keys),
+   `TRAINER_SYNC_REPO=gus2893/tapedojo-data`, and `TRAINER_SYNC_TOKEN` = a fine-grained PAT
+   with Contents read/write on that private repo only.
+3. Deploy. First boot backfills data (~3–5 min); after that the GitHub Pages frontend finds
+   the hosted backend automatically (it tries local first, then `tape-dojo.onrender.com`).
+
+Free-tier note: the instance naps after ~15 idle minutes (first request takes ~1 min to
+wake). A free UptimeRobot monitor pinging `/api/training/stats` every 5 minutes keeps it (and
+the self-play learning loop) always on.
+
 ## API
 
 | Endpoint | What it does |

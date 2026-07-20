@@ -15,7 +15,11 @@ public record AppProperties(
 		String trainingLog,
 		List<String> allowedOrigins,
 		Boolean selfPlay,
-		String learnedModel) {
+		String learnedModel,
+		Boolean bootstrap,
+		Integer backfillDays,
+		List<String> symbols,
+		String syncRepo) {
 
 	public boolean selfPlayEnabled() {
 		return selfPlay == null || selfPlay;
@@ -23,5 +27,23 @@ public record AppProperties(
 
 	public String learnedModelPath() {
 		return learnedModel != null ? learnedModel : "./data/learned_model.json";
+	}
+
+	/** Cloud mode: fetch bar data at startup instead of reading the labs' CSVs. */
+	public boolean bootstrapEnabled() {
+		return bootstrap != null && bootstrap;
+	}
+
+	public int backfillDaysOrDefault() {
+		return backfillDays != null ? backfillDays : 150;
+	}
+
+	public List<String> symbolsOrEmpty() {
+		return symbols == null ? List.of() : symbols;
+	}
+
+	/** Private GitHub repo ("owner/name") that persists the training state across redeploys. */
+	public String syncRepoOrNull() {
+		return syncRepo == null || syncRepo.isBlank() ? null : syncRepo;
 	}
 }

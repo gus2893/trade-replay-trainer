@@ -1,0 +1,22 @@
+# Render blueprint: free-tier web service running the Tape Dojo backend.
+# One-time setup after "New > Blueprint" on render.com:
+#   set APCA_API_KEY_ID, APCA_API_SECRET_KEY (Alpaca data keys) and optionally
+#   TRAINER_SYNC_REPO ("owner/private-repo") + TRAINER_SYNC_TOKEN (fine-grained
+#   PAT with Contents read/write on that repo) so learning survives redeploys.
+services:
+  - type: web
+    name: tape-dojo
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/symbols
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: cloud
+      - key: APCA_API_KEY_ID
+        sync: false
+      - key: APCA_API_SECRET_KEY
+        sync: false
+      - key: TRAINER_SYNC_REPO
+        sync: false
+      - key: TRAINER_SYNC_TOKEN
+        sync: false

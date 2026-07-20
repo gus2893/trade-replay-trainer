@@ -22,7 +22,7 @@ class LearnedFilterTest {
 
 	private LearnedFilter freshFilter() {
 		AppProperties props = new AppProperties(List.of(), List.of(), "unused", List.of(), false,
-				dir.resolve("model.json").toString());
+				dir.resolve("model.json").toString(), null, null, null, null);
 		return new LearnedFilter(props, new ObjectMapper());
 	}
 

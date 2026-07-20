@@ -1,0 +1,46 @@
+# Cloud profile (SPRING_PROFILES_ACTIVE=cloud): no lab CSVs on the host, so the
+# backend bootstraps its own bars at startup and mirrors its learning state to a
+# private GitHub repo. Secrets come from env vars only:
+#   APCA_API_KEY_ID / APCA_API_SECRET_KEY  — Alpaca data keys (stocks backfill)
+#   TRAINER_SYNC_REPO / TRAINER_SYNC_TOKEN — private repo + PAT for state sync
+server:
+  port: ${PORT:8080}
+
+trainer:
+  stock-data-dirs:
+    - ./data/bars
+  crypto-data-dirs:
+    - ./data/bars
+  training-log: ./data/training_log.jsonl
+  learned-model: ./data/learned_model.json
+  bootstrap: true
+  backfill-days: 150
+  symbols:
+    - SPY
+    - QQQ
+    - TSLA
+    - NVDA
+    - AAPL
+    - AMD
+    - MSFT
+    - META
+    - AMZN
+    - GOOGL
+    - NFLX
+    - AVGO
+    - COIN
+    - MSTR
+    - PLTR
+    - HOOD
+    - SOFI
+    - MARA
+    - RIOT
+    - ARM
+    - MU
+    - SMH
+  self-play: true
+  sync-repo: ${TRAINER_SYNC_REPO:}
+  allowed-origins:
+    - https://gus2893.github.io
+    - http://localhost:8080
+    - http://127.0.0.1:8080

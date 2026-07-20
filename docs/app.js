@@ -1102,19 +1102,47 @@ function wire() {
   });
 }
 
+/** Hosted backend (Render free tier — may take ~1 min to wake from idle). */
+const HOSTED_BACKEND = "https://tape-dojo.onrender.com";
+
+async function pickBackend() {
+  const candidates = [...new Set([state.backend, "http://localhost:8080", HOSTED_BACKEND])];
+  for (const base of candidates) {
+    try {
+      const res = await fetch(base + "/api/symbols", { signal: AbortSignal.timeout(base === HOSTED_BACKEND ? 70000 : 4000) });
+      if (res.ok) {
+        state.backend = base;
+        localStorage.setItem(LS.backend, base);
+        $("backendUrl").value = base;
+        return true;
+      }
+    } catch {
+      // try the next candidate
+    }
+  }
+  return false;
+}
+
 async function boot() {
   initChart();
   wire();
   buildIndPanel();
   renderStats();
   setPhase("idle");
-  try {
-    await loadSymbols();
-    $("emptyHint").textContent = `${state.symbols.length} instruments loaded — hit NEW SCENARIO (or press N)`;
-  } catch {
-    $("emptyHint").textContent = "Backend offline. Start it: cd Trade_Replay_Trainer/backend && mvnw spring-boot:run";
-    $("settingsPanel").classList.remove("hidden");
+  $("emptyHint").textContent = "Looking for a backend (local, then hosted — the hosted one may take ~1 min to wake)…";
+  if (await pickBackend()) {
+    try {
+      await loadSymbols();
+      $("emptyHint").textContent =
+        `${state.symbols.length} instruments via ${state.backend.includes("localhost") ? "local backend" : "hosted backend"} — hit NEW SCENARIO (or press N)`;
+      return;
+    } catch {
+      // fall through to the offline hint
+    }
   }
+  $("emptyHint").textContent =
+    "No backend found. Local: double-click Tape Dojo.bat. Hosted: check the Render service, then set its URL in ⚙.";
+  $("settingsPanel").classList.remove("hidden");
 }
 
 boot();
