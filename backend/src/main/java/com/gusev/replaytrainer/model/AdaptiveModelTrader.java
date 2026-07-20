@@ -41,9 +41,13 @@ public class AdaptiveModelTrader implements ModelTrader {
 		features.put("learnedPWin", Math.round(pWin * 1000.0) / 1000.0);
 		String pct = Math.round(pWin * 100) + "%";
 		if (pWin < VETO_THRESHOLD) {
-			return TradePlan.skip(plan.rationale() + " — vetoed by learned filter (P(win) " + pct + ")", features);
+			return TradePlan.skip(plan.rationale()
+					+ "\nLEARNED: filter (trained on " + filter.samples() + " outcomes) gives this only "
+					+ pct + " P(win) — below my 40% line → VETO, PASS", features);
 		}
 		return new TradePlan(plan.direction(), plan.stop(), plan.target(),
-				plan.rationale() + " · learned P(win) " + pct, features);
+				plan.rationale() + "\nLEARNED: filter (trained on " + filter.samples()
+						+ " outcomes) gives this " + pct + " P(win) → acceptable, taking it",
+				features);
 	}
 }

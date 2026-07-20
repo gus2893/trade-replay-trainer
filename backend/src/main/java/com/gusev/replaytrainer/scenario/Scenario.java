@@ -22,6 +22,7 @@ public final class Scenario {
 	public final List<Bar> contextBars;
 	public final List<Bar> futureBars;
 	public final TradePlan modelPlan;
+	public final SetupInfo setup;
 
 	private TradeSpec userTrade;
 	private TradeOutcome userOutcome;
@@ -30,7 +31,7 @@ public final class Scenario {
 	private boolean outcomeLogged;
 
 	Scenario(String id, String symbol, AssetClass assetClass, int barMinutes, boolean masked,
-			List<Bar> contextBars, List<Bar> futureBars, TradePlan modelPlan) {
+			List<Bar> contextBars, List<Bar> futureBars, TradePlan modelPlan, SetupInfo setup) {
 		this.id = id;
 		this.symbol = symbol;
 		this.assetClass = assetClass;
@@ -39,6 +40,7 @@ public final class Scenario {
 		this.contextBars = contextBars;
 		this.futureBars = futureBars;
 		this.modelPlan = modelPlan;
+		this.setup = setup;
 	}
 
 	public double lastVisibleClose() {

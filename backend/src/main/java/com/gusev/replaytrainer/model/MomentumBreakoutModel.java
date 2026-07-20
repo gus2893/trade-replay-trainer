@@ -55,28 +55,53 @@ public class MomentumBreakoutModel implements ModelTrader {
 		features.put("trendUp", trendUp ? 1.0 : 0.0);
 		features.put("trendDown", trendDown ? 1.0 : 0.0);
 
+		// Full thinking rundown, so human feedback can rate the REASONING.
+		String read = String.format(java.util.Locale.ROOT,
+				"READ: close %.2f · ATR(14) %.3f · %d-bar range %.2f–%.2f",
+				close, atr, RANGE_LOOKBACK, rangeLow, rangeHigh);
+		String trend = String.format(java.util.Locale.ROOT,
+				"TREND: EMA20 %.2f vs EMA50 %.2f → %s%s",
+				ema20, ema50, ema20 > ema50 ? "up" : "down",
+				trendUp ? ", price above EMA20 — aligned"
+						: trendDown ? ", price below EMA20 — aligned"
+								: ", but price is not on the trend side of EMA20 — not aligned");
+
 		if (atr <= 0) {
-			return TradePlan.skip("Flat tape, no measurable range", features);
+			return TradePlan.skip(read + "\n" + trend + "\nTRIGGER: no measurable range on this tape → PASS", features);
 		}
 		if (close > rangeHigh && trendUp) {
 			double stop = close - STOP_ATR_MULT * atr;
 			double target = close + TARGET_R_MULT * (close - stop);
-			return new TradePlan(TradeDirection.LONG, round(stop), round(target),
-					String.format("Close %.2f broke the %d-bar high %.2f with EMA20>EMA50 uptrend; ATR stop, 2R target",
-							close, RANGE_LOOKBACK, rangeHigh),
-					features);
+			String rationale = String.join("\n", read, trend,
+					String.format(java.util.Locale.ROOT,
+							"TRIGGER: close %.2f cleared the range high %.2f WITH the trend behind it → LONG", close,
+							rangeHigh),
+					String.format(java.util.Locale.ROOT,
+							"RISK: stop %.2f (entry − 1.2×ATR, under the breakout base) · target %.2f (2R)",
+							stop, target));
+			return new TradePlan(TradeDirection.LONG, round(stop), round(target), rationale, features);
 		}
 		if (close < rangeLow && trendDown) {
 			double stop = close + STOP_ATR_MULT * atr;
 			double target = close - TARGET_R_MULT * (stop - close);
-			return new TradePlan(TradeDirection.SHORT, round(stop), round(target),
-					String.format("Close %.2f broke the %d-bar low %.2f with EMA20<EMA50 downtrend; ATR stop, 2R target",
-							close, RANGE_LOOKBACK, rangeLow),
-					features);
+			String rationale = String.join("\n", read, trend,
+					String.format(java.util.Locale.ROOT,
+							"TRIGGER: close %.2f lost the range low %.2f WITH the trend behind it → SHORT", close,
+							rangeLow),
+					String.format(java.util.Locale.ROOT,
+							"RISK: stop %.2f (entry + 1.2×ATR, above the breakdown base) · target %.2f (2R)",
+							stop, target));
+			return new TradePlan(TradeDirection.SHORT, round(stop), round(target), rationale, features);
 		}
-		return TradePlan.skip(String.format(
-				"No aligned breakout: close %.2f inside %.2f-%.2f range or against trend", close, rangeLow, rangeHigh),
-				features);
+		String why;
+		if (close > rangeHigh) {
+			why = "TRIGGER: range high broke but the trend disagrees — counter-trend breakouts are traps → PASS";
+		} else if (close < rangeLow) {
+			why = "TRIGGER: range low broke but the trend disagrees — counter-trend breakdowns are traps → PASS";
+		} else {
+			why = "TRIGGER: close is still inside the range — no breakout, and I only trade aligned breakouts → PASS";
+		}
+		return TradePlan.skip(read + "\n" + trend + "\n" + why, features);
 	}
 
 	private static double ema(List<Bar> bars, int period) {

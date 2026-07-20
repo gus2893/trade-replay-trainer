@@ -70,6 +70,7 @@ class ScenarioServiceTest {
 			assertTrue(lastVisible.time().isBefore(s.futureBars.get(0).time()),
 					"context must end strictly before the future starts");
 			assertTrue(s.contextBars.size() >= 60, "model needs enough context");
+			assertNotNull(s.setup, "every scenario is classified");
 			assertTrue(s.futureBars.size() <= s.contextBars.size(),
 					"future plays out at most as long as the shown context");
 			int minFuture = s.assetClass == AssetClass.STOCK ? 12 : 48;

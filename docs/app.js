@@ -899,6 +899,7 @@ function showResult() {
   const userOutcome = verdict("youDir", "youR", "youDetail", rv.user);
   const modelOutcome = verdict("modelDir", "modelR", "modelDetail", rv.model);
   $("modelRationale").textContent = rv.model.rationale || "";
+  renderSetupReveal(rv.setup);
 
   const m = state.managed;
   if (m && userOutcome) {
@@ -918,6 +919,31 @@ function showResult() {
   if (modelOutcome) state.stats.modelR += modelOutcome.r;
   localStorage.setItem(LS.stats, JSON.stringify(state.stats));
   renderStats();
+}
+
+const SETUP_LABELS = {
+  LIQUIDITY_SWEEP: "LIQUIDITY SWEEP",
+  BREAKOUT_CONTINUATION: "BREAKOUT CONTINUATION",
+  FAILED_BREAKOUT: "FAILED BREAKOUT · FADE",
+  VWAP_REVERSION: "VWAP REVERSION",
+  TREND_PULLBACK: "TREND PULLBACK",
+  MOMENTUM_RUN: "MOMENTUM RUN",
+  CHOP: "CHOP — NO TRADE",
+  MIXED: "TRAP TAPE — NO CLEAN TRADE",
+};
+
+function renderSetupReveal(setup) {
+  if (!setup) {
+    $("setupReveal").classList.add("hidden");
+    return;
+  }
+  $("setupReveal").classList.remove("hidden");
+  const chip = $("setupChip");
+  const tradeable = setup.direction !== "SKIP";
+  chip.textContent = (SETUP_LABELS[setup.type] || setup.type)
+    + (tradeable ? ` → ${setup.direction} · ${setup.moveAtr} ATR` : "");
+  chip.className = "setup-chip " + (tradeable ? setup.direction.toLowerCase() : "pass");
+  $("setupDesc").textContent = setup.description || "";
 }
 
 function renderStats() {

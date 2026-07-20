@@ -425,3 +425,26 @@ select:focus, input:focus { border-color: var(--amber); }
 .mg-btn.used, .mg-btn.on { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
 .mg-btn:disabled { opacity: .35; cursor: not-allowed; }
 #mReadout { color: var(--amber); font-weight: 600; }
+
+/* setup reveal — the teaching card */
+.setup-reveal { margin-bottom: 14px; }
+.setup-chip {
+  display: inline-block;
+  font-family: var(--disp);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 1.5px;
+  padding: 6px 12px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  background: var(--bg-raise);
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.setup-chip.long { border-color: var(--green); color: var(--green); background: #2dd48f14; }
+.setup-chip.short { border-color: var(--red); color: var(--red); background: #f5484d14; }
+.setup-chip.pass { border-color: var(--dim); color: var(--dim); }
+.setup-desc { font-size: 12px; color: var(--dim); line-height: 1.6; }
+
+/* model thinking renders as a multi-line rundown */
+.model-rationale { white-space: pre-line; font-family: var(--mono); font-size: 11px; }

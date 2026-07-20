@@ -48,7 +48,9 @@ public class ScenarioService {
 	private static final int CRYPTO_MAX_CONTEXT_BARS = 1344;
 	private static final int CRYPTO_MIN_FUTURE_BARS = 48;
 	private static final int MAX_STORED_SCENARIOS = 300;
-	private static final int MAX_PICK_ATTEMPTS = 25;
+	private static final int MAX_PICK_ATTEMPTS = 40;
+	/** Share of scenarios curated to be real setups; the rest are chop, so passing stays a skill. */
+	private static final double SETUP_SHARE = 0.75;
 
 	private final MarketDataProvider provider;
 	private final ModelTrader modelTrader;
@@ -88,13 +90,29 @@ public class ScenarioService {
 		return attempt(pool(null, includeCrypto), true, phase);
 	}
 
+	/**
+	 * Curated sampling: decide up front whether this scenario should be a real
+	 * setup or deliberate chop, then rejection-sample candidate windows until
+	 * one matches. Falls back to the first buildable window so it never fails.
+	 */
 	private Scenario attempt(List<SymbolInfo> pool, boolean masked, CutPhase phase) {
+		boolean wantSetup = random.nextDouble() < SETUP_SHARE;
+		Scenario fallback = null;
 		for (int i = 0; i < MAX_PICK_ATTEMPTS; i++) {
 			SymbolInfo pick = pool.get(random.nextInt(pool.size()));
-			Scenario scenario = tryBuild(provider.series(pick.symbol()), masked, phase);
-			if (scenario != null) {
-				return scenario;
+			Scenario candidate = tryBuild(provider.series(pick.symbol()), masked, phase);
+			if (candidate == null) {
+				continue;
 			}
+			if (fallback == null) {
+				fallback = candidate;
+			}
+			if (wantSetup ? candidate.setup.isRealSetup() : candidate.setup.isChop()) {
+				return candidate;
+			}
+		}
+		if (fallback != null) {
+			return fallback;
 		}
 		throw new IllegalStateException("Could not find a usable scenario window; is the lab data present?");
 	}
@@ -127,8 +145,9 @@ public class ScenarioService {
 		List<Bar> context = List.copyOf(series.bars().subList(window[0], window[1] + 1));
 		List<Bar> future = List.copyOf(series.bars().subList(window[1] + 1, window[2] + 1));
 		TradePlan modelPlan = modelTrader.proposeTrade(context);
+		SetupInfo setup = SetupDetector.classify(context, future, series.barMinutes());
 		return new Scenario(UUID.randomUUID().toString(), series.symbol(), series.assetClass(),
-				series.barMinutes(), masked, context, future, modelPlan);
+				series.barMinutes(), masked, context, future, modelPlan, setup);
 	}
 
 	/** Returns {contextStart, cutIndex, futureEndInclusive} or null if the pick is unusable. */

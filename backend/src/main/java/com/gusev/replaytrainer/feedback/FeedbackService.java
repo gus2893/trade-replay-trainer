@@ -64,6 +64,7 @@ public class FeedbackService {
 		record.put("userTrade", TradeReport.of(scenario.userTrade(), scenario.userOutcome()));
 		record.put("modelTrade", TradeReport.of(scenario.modelPlan, scenario.modelOutcome()));
 		record.put("modelFeatures", scenario.modelPlan.features());
+		record.put("setup", scenario.setup);
 		append(record);
 	}
 

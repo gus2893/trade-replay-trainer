@@ -88,6 +88,8 @@ class ReplayTrainerFlowTest {
 				.andExpect(jsonPath("$.user.direction").value("LONG"))
 				.andExpect(jsonPath("$.user.outcome.r").exists())
 				.andExpect(jsonPath("$.model.direction").exists())
+				.andExpect(jsonPath("$.setup.type").exists())
+				.andExpect(jsonPath("$.setup.description").exists())
 				.andReturn().getResponse().getContentAsString());
 		assertTrue(reveal.get("futureBars").size() >= 12, "hidden bars revealed on play");
 
