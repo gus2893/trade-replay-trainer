@@ -46,12 +46,15 @@ public class ScenarioController {
 
 	@PostMapping("/{id}/play")
 	public RevealResponse play(@PathVariable String id) {
-		return RevealResponse.from(scenarios.play(id));
+		var scenario = scenarios.play(id);
+		// Every played scenario feeds the training set, rated or not.
+		feedback.recordOutcome(scenario);
+		return RevealResponse.from(scenario);
 	}
 
 	@PostMapping("/{id}/feedback")
 	public Map<String, Object> rate(@PathVariable String id, @Valid @RequestBody FeedbackRequest request) {
-		feedback.record(scenarios.get(id), request);
+		feedback.recordRating(scenarios.get(id), request);
 		return Map.of("recorded", true);
 	}
 }

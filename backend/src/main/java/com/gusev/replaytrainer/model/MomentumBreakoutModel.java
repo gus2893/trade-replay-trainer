@@ -1,6 +1,8 @@
 package com.gusev.replaytrainer.model;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.stereotype.Component;
 
@@ -12,7 +14,7 @@ import com.gusev.replaytrainer.sim.TradeDirection;
  * trade range breakouts only when the EMA trend agrees, 2R target, ATR stop.
  * Its trades plus the human good/bad/neutral ratings accumulate in the
  * training log so a learned policy can replace it later behind the same
- * interface.
+ * interface. The feature snapshot it decided on rides along in the plan.
  */
 @Component
 public class MomentumBreakoutModel implements ModelTrader {
@@ -24,16 +26,13 @@ public class MomentumBreakoutModel implements ModelTrader {
 	@Override
 	public TradePlan proposeTrade(List<Bar> bars) {
 		if (bars.size() < 60) {
-			return TradePlan.skip("Not enough context bars");
+			return TradePlan.skip("Not enough context bars", Map.of());
 		}
 		int n = bars.size();
 		double close = bars.get(n - 1).close();
 		double ema20 = ema(bars, 20);
 		double ema50 = ema(bars, 50);
 		double atr = atr(bars, 14);
-		if (atr <= 0) {
-			return TradePlan.skip("Flat tape, no measurable range");
-		}
 
 		// Breakout range excludes the latest bar so its close can break it.
 		double rangeHigh = Double.MIN_VALUE;
@@ -46,22 +45,38 @@ public class MomentumBreakoutModel implements ModelTrader {
 		boolean trendUp = ema20 > ema50 && close > ema20;
 		boolean trendDown = ema20 < ema50 && close < ema20;
 
+		Map<String, Double> features = new LinkedHashMap<>();
+		features.put("close", round(close));
+		features.put("ema20", round(ema20));
+		features.put("ema50", round(ema50));
+		features.put("atr14", round(atr));
+		features.put("rangeHigh", round(rangeHigh));
+		features.put("rangeLow", round(rangeLow));
+		features.put("trendUp", trendUp ? 1.0 : 0.0);
+		features.put("trendDown", trendDown ? 1.0 : 0.0);
+
+		if (atr <= 0) {
+			return TradePlan.skip("Flat tape, no measurable range", features);
+		}
 		if (close > rangeHigh && trendUp) {
 			double stop = close - STOP_ATR_MULT * atr;
 			double target = close + TARGET_R_MULT * (close - stop);
 			return new TradePlan(TradeDirection.LONG, round(stop), round(target),
 					String.format("Close %.2f broke the %d-bar high %.2f with EMA20>EMA50 uptrend; ATR stop, 2R target",
-							close, RANGE_LOOKBACK, rangeHigh));
+							close, RANGE_LOOKBACK, rangeHigh),
+					features);
 		}
 		if (close < rangeLow && trendDown) {
 			double stop = close + STOP_ATR_MULT * atr;
 			double target = close - TARGET_R_MULT * (stop - close);
 			return new TradePlan(TradeDirection.SHORT, round(stop), round(target),
 					String.format("Close %.2f broke the %d-bar low %.2f with EMA20<EMA50 downtrend; ATR stop, 2R target",
-							close, RANGE_LOOKBACK, rangeLow));
+							close, RANGE_LOOKBACK, rangeLow),
+					features);
 		}
 		return TradePlan.skip(String.format(
-				"No aligned breakout: close %.2f inside %.2f-%.2f range or against trend", close, rangeLow, rangeHigh));
+				"No aligned breakout: close %.2f inside %.2f-%.2f range or against trend", close, rangeLow, rangeHigh),
+				features);
 	}
 
 	private static double ema(List<Bar> bars, int period) {

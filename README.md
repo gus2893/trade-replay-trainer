@@ -12,11 +12,13 @@ the full record (both trades, both outcomes in R-multiples, your judgement) is a
 JSONL training log, building the dataset to train a learned policy that will replace the
 baseline behind the same interface.
 
-**Reading the tape:** scenarios come with deep context (up to 10 prior sessions for stocks,
-7 days for crypto) and a view-timeframe switcher — stocks 5m/15m/30m/1h, crypto 15m/1h/4h.
+**Reading the tape:** scenarios come with deep context (up to 20 prior sessions for stocks,
+14 days for crypto) and a view-timeframe switcher — stocks 5m/15m/30m/1h, crypto 15m/1h/4h.
 Replay always steps in base bars, so on a higher timeframe you watch the candle form live.
-Toggleable session-anchored VWAP and EMA 20/50 overlays (the EMAs are exactly what the model
-looks at). Keyboard-first: **N** new scenario, **L/S/P** direction, **Enter** commit,
+Indicator menu: session-anchored VWAP with ±1σ/±2σ bands, EMA 9/20/50 (the 20/50 pair is
+exactly what the model looks at), SMA 200, Bollinger 20·2σ, 30-minute opening range,
+prior-day high/low/close levels, and an RSI-14 pane. ATR readout in the header for stop
+sizing. Keyboard-first: **N** new scenario, **L/S/P** direction, **Enter** commit,
 **Space** play/pause, **1/2/3** rate. The header tracks session R for you and the model plus
 average **give-back** (peak R surrendered per trade — the metric the live account leaks).
 
@@ -66,14 +68,17 @@ ledgers.
 
 ## Training data
 
-Every rated scenario appends one line to `backend/data/training_log.jsonl` (gitignored):
+`backend/data/training_log.jsonl` (gitignored) gets one line per event, two record types
+joined by `scenarioId`:
 
-```json
-{"ts":"…","symbol":"TSLA","cutTime":"…","userTrade":{…,"outcome":{"r":1.4,…}},
- "modelTrade":{…,"outcome":{"r":-1.0,…}},"rating":"BAD"}
-```
+- **`outcome`** — written for EVERY played scenario, rated or not: both trades, both results
+  (R/MFE/MAE), and the model's exact feature snapshot at decision time (close, EMA20/50,
+  ATR14, range high/low, trend flags). This is what a learned policy trains on.
+- **`rating`** — the human GOOD/BAD/NEUTRAL judgement plus optional note, when given.
 
-Bars are reproducible from symbol + cutTime against the labs' CSVs, so records stay small.
+`GET /api/training/stats` summarizes the dataset (record counts, model/user avg R, rating
+breakdown) so you can watch it grow. Bars are reproducible from symbol + cutTime against the
+labs' CSVs, so records stay small.
 
 ## Tests
 

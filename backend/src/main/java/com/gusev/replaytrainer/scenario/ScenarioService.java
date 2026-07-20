@@ -27,10 +27,10 @@ import com.gusev.replaytrainer.sim.TradeSpec;
  * Builds random practice windows out of the labs' cached series and holds the
  * per-scenario state. Windowing rules:
  * Stocks (5m RTH bars): pick a random session, cut somewhere between 30 min
- * after the open and one hour before the close; context is up to ten prior
+ * after the open and one hour before the close; context is up to twenty prior
  * sessions (at least two) plus the current session up to the cut; the future
  * is the rest of that session.
- * Crypto (15m continuous): up to 672 context bars (7 days, min 192),
+ * Crypto (15m continuous): up to 1344 context bars (14 days, min 192),
  * 48 future bars (12h).
  */
 @Service
@@ -40,9 +40,9 @@ public class ScenarioService {
 	private static final int STOCK_MIN_SESSION_BARS = 40;
 	private static final int STOCK_MIN_CUT_OFFSET = 6;
 	private static final int STOCK_MIN_FUTURE_BARS = 12;
-	private static final int STOCK_MAX_CONTEXT_SESSIONS = 10;
+	private static final int STOCK_MAX_CONTEXT_SESSIONS = 20;
 	private static final int CRYPTO_MIN_CONTEXT_BARS = 192;
-	private static final int CRYPTO_MAX_CONTEXT_BARS = 672;
+	private static final int CRYPTO_MAX_CONTEXT_BARS = 1344;
 	private static final int CRYPTO_FUTURE_BARS = 48;
 	private static final int MAX_STORED_SCENARIOS = 300;
 	private static final int MAX_PICK_ATTEMPTS = 25;

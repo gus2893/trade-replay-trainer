@@ -27,6 +27,7 @@ public final class Scenario {
 	private TradeOutcome userOutcome;
 	private TradeOutcome modelOutcome;
 	private boolean revealed;
+	private boolean outcomeLogged;
 
 	Scenario(String id, String symbol, AssetClass assetClass, int barMinutes, boolean masked,
 			List<Bar> contextBars, List<Bar> futureBars, TradePlan modelPlan) {
@@ -71,5 +72,14 @@ public final class Scenario {
 		this.userOutcome = userOutcome;
 		this.modelOutcome = modelOutcome;
 		this.revealed = true;
+	}
+
+	/** Returns true exactly once, the first time it is called — guards duplicate log rows. */
+	public synchronized boolean markOutcomeLogged() {
+		if (outcomeLogged) {
+			return false;
+		}
+		outcomeLogged = true;
+		return true;
 	}
 }

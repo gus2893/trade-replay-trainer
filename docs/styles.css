@@ -381,3 +381,29 @@ select:focus, input:focus { border-color: var(--amber); }
 }
 .ov-btn.active { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
 .ticket-note b { color: var(--dim); font-weight: 600; }
+
+/* indicators dropdown */
+.ind-wrap { position: relative; }
+.ind-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow: 0 10px 30px #000a;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 190px;
+}
+.ind-item {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 11px; color: var(--dim);
+  cursor: pointer; user-select: none;
+}
+.ind-item input { accent-color: var(--amber); }
+.ind-item.on { color: var(--text); }
+.ind-item .swatch { width: 10px; height: 2px; display: inline-block; }

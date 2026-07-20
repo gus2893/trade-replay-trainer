@@ -96,9 +96,18 @@ class ReplayTrainerFlowTest {
 				.andExpect(jsonPath("$.recorded").value(true));
 
 		List<String> lines = Files.readAllLines(trainingLog);
-		assertEquals(1, lines.size());
+		assertEquals(2, lines.size(), "one outcome record (from play) + one rating record");
+		assertTrue(lines.get(0).contains("\"type\":\"outcome\""));
 		assertTrue(lines.get(0).contains("\"symbol\":\"TSLA\""));
-		assertTrue(lines.get(0).contains("\"rating\":\"GOOD\""));
+		assertTrue(lines.get(0).contains("\"modelFeatures\""));
+		assertTrue(lines.get(1).contains("\"type\":\"rating\""));
+		assertTrue(lines.get(1).contains("\"rating\":\"GOOD\""));
+
+		mvc.perform(get("/api/training/stats"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.outcomes").value(1))
+				.andExpect(jsonPath("$.ratings").value(1))
+				.andExpect(jsonPath("$.ratingCounts.GOOD").value(1));
 	}
 
 	@Test

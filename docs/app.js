@@ -4,7 +4,8 @@
  *
  * The backend always delivers BASE bars (5m stocks, 15m crypto). Playback
  * steps base bars; the view timeframe is a client-side aggregation, so on
- * 15m/1h/4h you watch the higher-TF candle form bar by bar.
+ * 15m/1h/4h you watch the higher-TF candle form bar by bar. Indicators are
+ * computed on the view-timeframe buckets.
  */
 "use strict";
 
@@ -12,10 +13,23 @@ const LS = {
   backend: "tapedojo.backend",
   stats: "tapedojo.stats",
   crypto: "tapedojo.crypto",
-  overlays: "tapedojo.overlays",
+  ind: "tapedojo.ind",
 };
 
 const TF_OPTIONS = { STOCK: [5, 15, 30, 60], CRYPTO: [15, 60, 240] };
+
+const INDICATORS = [
+  { key: "vwap", label: "VWAP", color: "#f5a524cc" },
+  { key: "vwapBands", label: "VWAP ±1σ ±2σ", color: "#f5a52466" },
+  { key: "ema9", label: "EMA 9", color: "#7dd3fccc" },
+  { key: "ema20", label: "EMA 20", color: "#38bdf8aa" },
+  { key: "ema50", label: "EMA 50", color: "#9d7bd8aa" },
+  { key: "sma200", label: "SMA 200", color: "#e2e8f0aa" },
+  { key: "bb", label: "Bollinger 20·2σ", color: "#64748baa" },
+  { key: "orb", label: "Opening range 30m", color: "#f5a524", stockOnly: true },
+  { key: "pdlvl", label: "Prior day H/L/C", color: "#94a3b8" },
+  { key: "rsi", label: "RSI 14 (pane)", color: "#f5a524" },
+];
 
 const state = {
   backend: localStorage.getItem(LS.backend) || "http://localhost:8080",
@@ -37,7 +51,7 @@ const state = {
   buckets: [], // delivered aggregated to viewTf
   timeMap: new Map(), // base t -> bucket t
   agg: null, // incremental aggregation cursor for playback
-  overlays: { vwap: false, ema: false, ...JSON.parse(localStorage.getItem(LS.overlays) || "{}") },
+  ind: JSON.parse(localStorage.getItem(LS.ind) || "{}"),
   stats: { trades: 0, youR: 0, modelR: 0, gbSum: 0, ...JSON.parse(localStorage.getItem(LS.stats) || "{}") },
 };
 
@@ -45,7 +59,9 @@ const $ = (id) => document.getElementById(id);
 
 /* ── chart ─────────────────────────────────────────────── */
 
-let chart, candles, volume, vwapLine, ema20Line, ema50Line;
+let chart, candles, volume;
+const indSeries = {}; // key -> [lineSeries...]
+let rsiGuidesAdded = false;
 
 function tzForScenario() {
   return state.scenario && state.scenario.assetClass === "STOCK" ? "America/New_York" : "UTC";
@@ -66,6 +82,10 @@ function etDayKey(epochSec) {
     dayKeyCache.set(epochSec, v);
   }
   return v;
+}
+
+function periodKey(epochSec) {
+  return state.scenario.assetClass === "STOCK" ? etDayKey(epochSec) : String(Math.floor(epochSec / 86400));
 }
 
 function initChart() {
@@ -89,12 +109,15 @@ function initChart() {
     borderVisible: false,
   });
   volume = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol" });
-  chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
-  const overlayOpts = { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
-  vwapLine = chart.addLineSeries({ ...overlayOpts, color: "#f5a524bb" });
-  ema20Line = chart.addLineSeries({ ...overlayOpts, color: "#38bdf8aa" });
-  ema50Line = chart.addLineSeries({ ...overlayOpts, color: "#9d7bd8aa" });
+  applyPaneLayout();
   new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })).observe(el);
+}
+
+function applyPaneLayout() {
+  const rsiOn = !!state.ind.rsi;
+  chart.priceScale("right").applyOptions({ scaleMargins: rsiOn ? { top: 0.05, bottom: 0.34 } : { top: 0.08, bottom: 0.2 } });
+  chart.priceScale("vol").applyOptions({ scaleMargins: rsiOn ? { top: 0.92, bottom: 0 } : { top: 0.86, bottom: 0 } });
+  if (indSeries.rsi) chart.priceScale("rsi").applyOptions({ scaleMargins: { top: 0.7, bottom: 0.1 } });
 }
 
 function toCandle(b) {
@@ -187,7 +210,7 @@ function renderAll() {
   rebuildBuckets();
   candles.setData(state.buckets.map(toCandle));
   volume.setData(state.buckets.map(volBar));
-  renderOverlays();
+  renderIndicators();
   renderMarkers();
   applyVisibleRange();
 }
@@ -197,44 +220,243 @@ function applyVisibleRange() {
   chart.timeScale().setVisibleLogicalRange({ from: Math.max(-2, n - 150), to: n + 4 });
 }
 
-/* ── indicator overlays ────────────────────────────────── */
+/* ── indicators ────────────────────────────────────────── */
 
-function renderOverlays() {
-  vwapLine.setData(state.overlays.vwap ? vwapData() : []);
-  const ema = state.overlays.ema;
-  ema20Line.setData(ema ? emaData(20) : []);
-  ema50Line.setData(ema ? emaData(50) : []);
-  $("ovVwap").classList.toggle("active", state.overlays.vwap);
-  $("ovEma").classList.toggle("active", state.overlays.ema);
+function anyIndOn() {
+  return INDICATORS.some((i) => state.ind[i.key]);
 }
 
-/** Session-anchored VWAP: resets each ET day for stocks, each UTC day for crypto. */
-function vwapData() {
-  const out = [];
-  let day = null, cumPV = 0, cumV = 0;
-  for (const b of state.buckets) {
-    const dk = state.scenario.assetClass === "STOCK" ? etDayKey(b.t) : Math.floor(b.t / 86400);
-    if (dk !== day) {
-      day = dk;
-      cumPV = 0;
-      cumV = 0;
+function getIndSeries(key, defs) {
+  if (!indSeries[key]) {
+    indSeries[key] = defs.map((o) => chart.addLineSeries({
+      lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, ...o,
+    }));
+  }
+  return indSeries[key];
+}
+
+function setInd(key, defs, dataArrays) {
+  const arr = getIndSeries(key, defs);
+  arr.forEach((s, i) => s.setData(dataArrays ? dataArrays[i] || [] : []));
+}
+
+function renderIndicators() {
+  const on = state.ind;
+  const B = state.buckets;
+  const isStock = state.scenario?.assetClass === "STOCK";
+  const dot = LightweightCharts.LineStyle.Dotted;
+
+  const vw = (on.vwap || on.vwapBands) ? computeVwap(B) : null;
+  setInd("vwap", [{ color: "#f5a524cc" }], on.vwap && vw ? [vw.mid] : null);
+  setInd("vwapBands",
+    [{ color: "#f5a52466" }, { color: "#f5a52466" }, { color: "#f5a52433" }, { color: "#f5a52433" }],
+    on.vwapBands && vw ? [vw.up1, vw.dn1, vw.up2, vw.dn2] : null);
+
+  setInd("ema9", [{ color: "#7dd3fccc" }], on.ema9 ? [emaSeries(B, 9)] : null);
+  setInd("ema20", [{ color: "#38bdf8aa" }], on.ema20 ? [emaSeries(B, 20)] : null);
+  setInd("ema50", [{ color: "#9d7bd8aa" }], on.ema50 ? [emaSeries(B, 50)] : null);
+  setInd("sma200", [{ color: "#e2e8f0aa", lineWidth: 2 }], on.sma200 ? [smaSeries(B, 200)] : null);
+
+  const bb = on.bb ? computeBB(B, 20, 2) : null;
+  setInd("bb",
+    [{ color: "#64748baa", lineStyle: dot }, { color: "#64748b77" }, { color: "#64748b77" }],
+    bb ? [bb.mid, bb.up, bb.dn] : null);
+
+  const or = on.orb && isStock ? computeOpeningRange() : null;
+  setInd("orb",
+    [{ color: "#f5a524dd", lineStyle: dot, lineWidth: 2 }, { color: "#f5a524dd", lineStyle: dot, lineWidth: 2 }],
+    or ? [or.high, or.low] : null);
+
+  const pd = on.pdlvl ? computePriorDayLevels() : null;
+  setInd("pdlvl",
+    [{ color: "#2dd48f88", lineStyle: dot }, { color: "#f5484d88", lineStyle: dot }, { color: "#94a3b888", lineStyle: dot }],
+    pd ? [pd.high, pd.low, pd.close] : null);
+
+  const rsiArr = on.rsi ? [rsiSeriesData(B, 14)] : null;
+  setInd("rsi", [{ color: "#f5a524cc", priceScaleId: "rsi" }], rsiArr);
+  if (on.rsi && !rsiGuidesAdded && indSeries.rsi) {
+    for (const level of [30, 70]) {
+      indSeries.rsi[0].createPriceLine({
+        price: level, color: "#46536488", lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false, title: "",
+      });
     }
-    cumPV += ((b.h + b.l + b.c) / 3) * b.v;
+    rsiGuidesAdded = true;
+  }
+  applyPaneLayout();
+}
+
+/** Session-anchored VWAP with ±1σ/±2σ bands (volume-weighted variance). */
+function computeVwap(B) {
+  const mid = [], up1 = [], dn1 = [], up2 = [], dn2 = [];
+  let period = null, cumV = 0, cumPV = 0, cumP2V = 0;
+  for (const b of B) {
+    const pk = periodKey(b.t);
+    if (pk !== period) {
+      period = pk;
+      cumV = 0; cumPV = 0; cumP2V = 0;
+    }
+    const tp = (b.h + b.l + b.c) / 3;
     cumV += b.v;
-    if (cumV > 0) out.push({ time: b.t, value: cumPV / cumV });
+    cumPV += tp * b.v;
+    cumP2V += tp * tp * b.v;
+    if (cumV <= 0) continue;
+    const vwap = cumPV / cumV;
+    const sigma = Math.sqrt(Math.max(0, cumP2V / cumV - vwap * vwap));
+    mid.push({ time: b.t, value: vwap });
+    up1.push({ time: b.t, value: vwap + sigma });
+    dn1.push({ time: b.t, value: vwap - sigma });
+    up2.push({ time: b.t, value: vwap + 2 * sigma });
+    dn2.push({ time: b.t, value: vwap - 2 * sigma });
+  }
+  return { mid, up1, dn1, up2, dn2 };
+}
+
+function emaSeries(B, period) {
+  const out = [];
+  const k = 2 / (period + 1);
+  let ema = null;
+  for (const b of B) {
+    ema = ema === null ? b.c : b.c * k + ema * (1 - k);
+    out.push({ time: b.t, value: ema });
+  }
+  return out.slice(period);
+}
+
+function smaSeries(B, period) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < B.length; i++) {
+    sum += B[i].c;
+    if (i >= period) sum -= B[i - period].c;
+    if (i >= period - 1) out.push({ time: B[i].t, value: sum / period });
   }
   return out;
 }
 
-function emaData(period) {
-  const out = [];
-  const k = 2 / (period + 1);
-  let ema = null;
-  for (const b of state.buckets) {
-    ema = ema === null ? b.c : b.c * k + ema * (1 - k);
-    out.push({ time: b.t, value: ema });
+function computeBB(B, period, mult) {
+  const mid = [], up = [], dn = [];
+  for (let i = period - 1; i < B.length; i++) {
+    let sum = 0, sum2 = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      sum += B[j].c;
+      sum2 += B[j].c * B[j].c;
+    }
+    const mean = sum / period;
+    const sd = Math.sqrt(Math.max(0, sum2 / period - mean * mean));
+    mid.push({ time: B[i].t, value: mean });
+    up.push({ time: B[i].t, value: mean + mult * sd });
+    dn.push({ time: B[i].t, value: mean - mult * sd });
   }
-  return out.slice(period); // skip the noisy warm-up
+  return { mid, up, dn };
+}
+
+/** First-30-minutes high/low per session, drawn from OR completion onward. */
+function computeOpeningRange() {
+  const orBars = Math.max(1, Math.round(30 / state.baseTf));
+  const byDay = new Map(); // day -> {high, low, endT}
+  let day = null, count = 0, hi = 0, lo = 0;
+  for (const b of state.delivered) {
+    const dk = etDayKey(b.t);
+    if (dk !== day) {
+      day = dk;
+      count = 0;
+      hi = -Infinity;
+      lo = Infinity;
+    }
+    if (count < orBars) {
+      hi = Math.max(hi, b.h);
+      lo = Math.min(lo, b.l);
+      count++;
+      if (count === orBars) byDay.set(dk, { high: hi, low: lo, endT: b.t });
+    }
+  }
+  const high = [], low = [];
+  for (const b of state.buckets) {
+    const or = byDay.get(etDayKey(b.t));
+    if (or && b.t >= or.endT) {
+      high.push({ time: b.t, value: or.high });
+      low.push({ time: b.t, value: or.low });
+    }
+  }
+  return { high, low };
+}
+
+/** Previous session's high/low/close drawn across the current session. */
+function computePriorDayLevels() {
+  const days = []; // ordered {key, high, low, close}
+  const idx = new Map();
+  for (const b of state.delivered) {
+    const pk = periodKey(b.t);
+    if (!idx.has(pk)) {
+      idx.set(pk, days.length);
+      days.push({ key: pk, high: b.h, low: b.l, close: b.c });
+    } else {
+      const d = days[idx.get(pk)];
+      d.high = Math.max(d.high, b.h);
+      d.low = Math.min(d.low, b.l);
+      d.close = b.c;
+    }
+  }
+  const high = [], low = [], close = [];
+  for (const b of state.buckets) {
+    const i = idx.get(periodKey(b.t));
+    if (i === undefined || i === 0) continue;
+    const prev = days[i - 1];
+    high.push({ time: b.t, value: prev.high });
+    low.push({ time: b.t, value: prev.low });
+    close.push({ time: b.t, value: prev.close });
+  }
+  return { high, low, close };
+}
+
+/** Wilder RSI on view-TF closes. */
+function rsiSeriesData(B, period) {
+  if (B.length <= period) return [];
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = B[i].c - B[i - 1].c;
+    if (d >= 0) gain += d;
+    else loss -= d;
+  }
+  let avgGain = gain / period, avgLoss = loss / period;
+  const out = [{ time: B[period].t, value: rsiVal(avgGain, avgLoss) }];
+  for (let i = period + 1; i < B.length; i++) {
+    const d = B[i].c - B[i - 1].c;
+    avgGain = (avgGain * (period - 1) + Math.max(0, d)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(0, -d)) / period;
+    out.push({ time: B[i].t, value: rsiVal(avgGain, avgLoss) });
+  }
+  return out;
+}
+
+function rsiVal(avgGain, avgLoss) {
+  if (avgLoss === 0) return 100;
+  return 100 - 100 / (1 + avgGain / avgLoss);
+}
+
+function buildIndPanel() {
+  const panel = $("indPanel");
+  panel.innerHTML = "";
+  for (const ind of INDICATORS) {
+    if (ind.stockOnly && state.scenario && state.scenario.assetClass !== "STOCK") continue;
+    const label = document.createElement("label");
+    label.className = "ind-item" + (state.ind[ind.key] ? " on" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!state.ind[ind.key];
+    cb.onchange = () => {
+      state.ind[ind.key] = cb.checked;
+      label.classList.toggle("on", cb.checked);
+      localStorage.setItem(LS.ind, JSON.stringify(state.ind));
+      if (state.scenario) renderIndicators();
+    };
+    const sw = document.createElement("span");
+    sw.className = "swatch";
+    sw.style.background = ind.color;
+    label.append(cb, sw, document.createTextNode(ind.label));
+    panel.appendChild(label);
+  }
 }
 
 /* ── backend ───────────────────────────────────────────── */
@@ -328,12 +550,14 @@ async function newScenario() {
 
   clearOverlayLines();
   buildTfButtons();
+  buildIndPanel();
   renderAll();
 
   const chip = $("chipSymbol");
   chip.textContent = sc.masked ? "?????" : sc.displaySymbol;
   chip.classList.toggle("masked", sc.masked);
-  $("chipTf").textContent = `${sc.assetClass} · ${sc.barMinutes}m base · last ${fmtPrice(sc.lastClose)}`;
+  $("chipTf").textContent =
+    `${sc.assetClass} · ${sc.barMinutes}m base · last ${fmtPrice(sc.lastClose)} · ATR ${fmtPrice(visibleAtr())}`;
 
   document.querySelectorAll(".dir-btn").forEach((b) => b.classList.remove("selected"));
   $("stopInput").value = "";
@@ -497,7 +721,7 @@ function stepPlayback() {
   const bucket = aggStep(state.agg, b);
   candles.update(toCandle(bucket));
   volume.update(volBar(bucket));
-  if (state.overlays.vwap || state.overlays.ema) renderOverlays();
+  if (anyIndOn()) renderIndicators();
   updateLivePnl(b);
   const u = reveal.user.outcome;
   if (u && state.playIdx === u.exitBarIndex) {
@@ -650,13 +874,13 @@ function wire() {
 
   document.querySelectorAll(".rate-btn").forEach((b) => (b.onclick = () => rate(b.dataset.rating, b)));
 
-  const toggleOverlay = (key) => {
-    state.overlays[key] = !state.overlays[key];
-    localStorage.setItem(LS.overlays, JSON.stringify(state.overlays));
-    if (state.scenario) renderOverlays();
+  $("indBtn").onclick = (e) => {
+    e.stopPropagation();
+    $("indPanel").classList.toggle("hidden");
   };
-  $("ovVwap").onclick = () => toggleOverlay("vwap");
-  $("ovEma").onclick = () => toggleOverlay("ema");
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".ind-wrap")) $("indPanel").classList.add("hidden");
+  });
 
   $("settingsBtn").onclick = () => $("settingsPanel").classList.toggle("hidden");
   $("backendUrl").value = state.backend;
@@ -709,6 +933,7 @@ function wire() {
 async function boot() {
   initChart();
   wire();
+  buildIndPanel();
   renderStats();
   setPhase("idle");
   try {
