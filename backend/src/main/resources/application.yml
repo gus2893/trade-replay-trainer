@@ -17,6 +17,12 @@ trainer:
     - ../../BTC_Paper_Trade_Lab/data
     - ../../US_Stocks_Paper_Trade_Lab/data
   training-log: ./data/training_log.jsonl
+  learned-model: ./data/learned_model.json
+  # The automatic learning loop: self-play generates outcomes continuously,
+  # the retrainer refits the learned filter from the log every minute.
+  self-play: true
+  self-play-interval-ms: 15000
+  retrain-interval-ms: 60000
   allowed-origins:
     - https://gus2893.github.io
     - http://localhost:8080

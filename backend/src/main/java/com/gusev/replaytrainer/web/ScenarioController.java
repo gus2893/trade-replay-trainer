@@ -32,8 +32,8 @@ public class ScenarioController {
 
 	@PostMapping
 	public ScenarioResponse create(@RequestBody(required = false) NewScenarioRequest request) {
-		NewScenarioRequest req = request == null ? new NewScenarioRequest(null, true) : request;
-		return ScenarioResponse.from(scenarios.create(req.symbol(), req.cryptoAllowed()));
+		NewScenarioRequest req = request == null ? new NewScenarioRequest(null, true, null) : request;
+		return ScenarioResponse.from(scenarios.create(req.symbol(), req.cryptoAllowed(), req.cutPhase()));
 	}
 
 	@PostMapping("/{id}/trade")
@@ -50,6 +50,13 @@ public class ScenarioController {
 		// Every played scenario feeds the training set, rated or not.
 		feedback.recordOutcome(scenario);
 		return RevealResponse.from(scenario);
+	}
+
+	@PostMapping("/{id}/managed")
+	public Map<String, Object> managed(@PathVariable String id,
+			@Valid @RequestBody com.gusev.replaytrainer.scenario.dto.ManagedRequest request) {
+		feedback.recordManaged(scenarios.get(id), request.r(), request.actions());
+		return Map.of("recorded", true);
 	}
 
 	@PostMapping("/{id}/feedback")

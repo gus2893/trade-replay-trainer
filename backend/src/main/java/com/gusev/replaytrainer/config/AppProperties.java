@@ -13,5 +13,15 @@ public record AppProperties(
 		List<String> stockDataDirs,
 		List<String> cryptoDataDirs,
 		String trainingLog,
-		List<String> allowedOrigins) {
+		List<String> allowedOrigins,
+		Boolean selfPlay,
+		String learnedModel) {
+
+	public boolean selfPlayEnabled() {
+		return selfPlay == null || selfPlay;
+	}
+
+	public String learnedModelPath() {
+		return learnedModel != null ? learnedModel : "./data/learned_model.json";
+	}
 }

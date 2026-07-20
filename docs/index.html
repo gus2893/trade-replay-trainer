@@ -25,6 +25,13 @@
       <span class="ctl-label">Crypto in pool</span>
       <span class="toggle"><input type="checkbox" id="cryptoToggle" checked><span class="knob"></span></span>
     </label>
+    <label class="ctl">
+      <span class="ctl-label">Cut timing</span>
+      <select id="phaseSelect">
+        <option value="ANY">Any time</option>
+        <option value="OPEN">At the open (ORB)</option>
+      </select>
+    </label>
     <button id="newScenarioBtn" class="btn btn-amber">NEW SCENARIO</button>
     <button id="settingsBtn" class="btn btn-ghost" title="Backend connection">⚙</button>
   </div>
@@ -63,6 +70,7 @@
           <button data-speed="4" class="speed-btn active">1×</button>
           <button data-speed="8" class="speed-btn">2×</button>
           <button data-speed="16" class="speed-btn">4×</button>
+          <button data-speed="32" class="speed-btn">8×</button>
           <button data-speed="0" class="speed-btn">MAX</button>
         </div>
         <span class="live-pnl" id="livePnl"></span>
@@ -91,6 +99,15 @@
       </div>
       <button class="btn btn-amber wide" id="commitBtn" disabled>COMMIT TRADE</button>
       <button class="btn btn-play wide hidden" id="playBtn">▶ PLAY IT OUT</button>
+      <div class="manage-block hidden" id="manageBlock">
+        <div class="rating-title">MANAGE POSITION</div>
+        <div class="manage-row">
+          <button class="mg-btn" id="mHalf">½ OFF</button>
+          <button class="mg-btn" id="mBe">STOP→BE</button>
+          <button class="mg-btn" id="mTrail">TRAIL</button>
+        </div>
+        <div class="rr-row">Managed <span id="mReadout">—</span></div>
+      </div>
       <p class="ticket-note" id="ticketNote">Entry fills at the next bar's open — same as the sim ledger.</p>
       <p class="ticket-note">Keys: <b>N</b> new · <b>L/S/P</b> direction · <b>Enter</b> commit · <b>Space</b> play/pause · <b>1/2/3</b> rate</p>
     </div>

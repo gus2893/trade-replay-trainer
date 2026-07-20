@@ -407,3 +407,21 @@ select:focus, input:focus { border-color: var(--amber); }
 .ind-item input { accent-color: var(--amber); }
 .ind-item.on { color: var(--text); }
 .ind-item .swatch { width: 10px; height: 2px; display: inline-block; }
+
+/* manage-position drills */
+.manage-block { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line-soft); }
+.manage-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.mg-btn {
+  font-family: var(--disp); font-weight: 700; font-size: 12px; letter-spacing: 1px;
+  padding: 9px 0;
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--dim);
+  cursor: pointer;
+  transition: all .12s;
+}
+.mg-btn:hover:not(:disabled) { color: var(--amber); border-color: var(--amber); }
+.mg-btn.used, .mg-btn.on { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+.mg-btn:disabled { opacity: .35; cursor: not-allowed; }
+#mReadout { color: var(--amber); font-weight: 600; }

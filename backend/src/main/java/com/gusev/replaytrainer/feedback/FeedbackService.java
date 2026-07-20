@@ -42,11 +42,18 @@ public class FeedbackService {
 
 	/** Logs the played-out scenario. Idempotent per scenario. */
 	public void recordOutcome(Scenario scenario) {
+		recordOutcome(scenario, false);
+	}
+
+	public void recordOutcome(Scenario scenario, boolean selfPlay) {
 		if (!scenario.revealed() || !scenario.markOutcomeLogged()) {
 			return;
 		}
 		Map<String, Object> record = new LinkedHashMap<>();
 		record.put("type", "outcome");
+		if (selfPlay) {
+			record.put("selfPlay", true);
+		}
 		record.put("ts", Instant.now().toString());
 		record.put("scenarioId", scenario.id);
 		record.put("symbol", scenario.symbol);
@@ -57,6 +64,21 @@ public class FeedbackService {
 		record.put("userTrade", TradeReport.of(scenario.userTrade(), scenario.userOutcome()));
 		record.put("modelTrade", TradeReport.of(scenario.modelPlan, scenario.modelOutcome()));
 		record.put("modelFeatures", scenario.modelPlan.features());
+		append(record);
+	}
+
+	/** The user's actively-managed exit result (partials/BE/trail), computed client-side. */
+	public void recordManaged(Scenario scenario, double managedR, List<String> actions) {
+		if (!scenario.revealed()) {
+			throw new IllegalStateException("Play the scenario before reporting a managed result");
+		}
+		Map<String, Object> record = new LinkedHashMap<>();
+		record.put("type", "managed");
+		record.put("ts", Instant.now().toString());
+		record.put("scenarioId", scenario.id);
+		record.put("symbol", scenario.symbol);
+		record.put("managedR", managedR);
+		record.put("actions", actions == null ? List.of() : actions);
 		append(record);
 	}
 
@@ -87,25 +109,36 @@ public class FeedbackService {
 		}
 	}
 
+	/** All records, parsed; malformed lines are dropped. */
+	public List<JsonNode> readRecords() {
+		List<JsonNode> out = new ArrayList<>();
+		for (String line : readLines()) {
+			try {
+				out.add(mapper.readTree(line));
+			} catch (RuntimeException ignored) {
+				// tolerate a corrupt line rather than poisoning training
+			}
+		}
+		return out;
+	}
+
 	/** Dataset summary so you can watch the training set grow. */
 	public Map<String, Object> stats() {
-		int outcomes = 0, ratings = 0, modelTrades = 0, userTrades = 0;
+		int outcomes = 0, ratings = 0, modelTrades = 0, userTrades = 0, selfPlayOutcomes = 0, managed = 0;
 		double modelR = 0, userR = 0;
 		Map<String, Integer> ratingCounts = new LinkedHashMap<>(Map.of("GOOD", 0, "NEUTRAL", 0, "BAD", 0));
-		List<String> lines = readLines();
-		for (String line : lines) {
-			JsonNode node;
-			try {
-				node = mapper.readTree(line);
-			} catch (RuntimeException e) {
-				continue;
-			}
+		for (JsonNode node : readRecords()) {
 			String type = node.path("type").asString("outcome");
 			if (type.equals("rating")) {
 				ratings++;
 				ratingCounts.merge(node.path("rating").asString(""), 1, Integer::sum);
+			} else if (type.equals("managed")) {
+				managed++;
 			} else {
 				outcomes++;
+				if (node.path("selfPlay").asBoolean(false)) {
+					selfPlayOutcomes++;
+				}
 				JsonNode model = node.path("modelTrade");
 				if (!model.path("direction").asString("SKIP").equals("SKIP")) {
 					modelTrades++;
@@ -120,6 +153,8 @@ public class FeedbackService {
 		}
 		Map<String, Object> out = new LinkedHashMap<>();
 		out.put("outcomes", outcomes);
+		out.put("selfPlayOutcomes", selfPlayOutcomes);
+		out.put("managedRecords", managed);
 		out.put("ratings", ratings);
 		out.put("ratingCounts", ratingCounts);
 		out.put("modelTrades", modelTrades);

@@ -14,6 +14,7 @@ const LS = {
   stats: "tapedojo.stats",
   crypto: "tapedojo.crypto",
   ind: "tapedojo.ind",
+  phase: "tapedojo.phase",
 };
 
 const TF_OPTIONS = { STOCK: [5, 15, 30, 60], CRYPTO: [15, 60, 240] };
@@ -52,6 +53,7 @@ const state = {
   timeMap: new Map(), // base t -> bucket t
   agg: null, // incremental aggregation cursor for playback
   ind: JSON.parse(localStorage.getItem(LS.ind) || "{}"),
+  managed: null, // client-side managed-position engine (partials/BE/trail)
   stats: { trades: 0, youR: 0, modelR: 0, gbSum: 0, ...JSON.parse(localStorage.getItem(LS.stats) || "{}") },
 };
 
@@ -533,9 +535,10 @@ async function newScenario() {
   state.playIdx = 0;
   const symbol = $("symbolSelect").value || null;
   const includeCrypto = $("cryptoToggle").checked;
+  const phase = $("phaseSelect").value;
   let sc;
   try {
-    sc = await api("/api/scenarios", { symbol, includeCrypto });
+    sc = await api("/api/scenarios", { symbol, includeCrypto, phase });
   } catch (e) {
     toast(e.message, true);
     return;
@@ -544,6 +547,10 @@ async function newScenario() {
   state.reveal = null;
   state.direction = null;
   state.userSpec = null;
+  state.managed = null;
+  $("manageBlock").classList.add("hidden");
+  document.querySelectorAll(".mg-btn").forEach((b) => { b.classList.remove("used", "on"); b.disabled = false; });
+  $("mReadout").textContent = "—";
   state.baseTf = sc.barMinutes;
   state.viewTf = sc.barMinutes;
   state.delivered = sc.bars.slice();
@@ -680,12 +687,107 @@ async function play() {
     });
   }
 
+  if (state.userSpec && reveal.user.outcome) {
+    initManaged(reveal.user.outcome.entryFill);
+  }
+
   state.playIdx = 0;
   if (state.speed === 0) {
     while (state.playIdx < reveal.futureBars.length) stepPlayback();
     return;
   }
   startTimer();
+}
+
+/* ── managed-position drills (partials / break-even / trail) ── */
+
+function initManaged(entryFill) {
+  state.managed = {
+    entry: entryFill,
+    isLong: state.userSpec.isLong,
+    stop: state.userSpec.stop,
+    target: state.userSpec.target,
+    risk: Math.abs(entryFill - state.userSpec.stop),
+    remaining: 1,
+    realized: 0,
+    peak: 0,
+    trailing: false,
+    halfUsed: false,
+    beUsed: false,
+    exited: false,
+    exitReason: null,
+    final: null,
+    actions: [],
+  };
+  $("manageBlock").classList.remove("hidden");
+  updateManageUI();
+}
+
+function rAt(m, price) {
+  return (m.isLong ? price - m.entry : m.entry - price) / m.risk;
+}
+
+function managedR(price) {
+  const m = state.managed;
+  return m.realized + (m.exited ? 0 : m.remaining * rAt(m, price));
+}
+
+function lastDeliveredClose() {
+  return state.delivered[state.delivered.length - 1].c;
+}
+
+function manageBar(b) {
+  const m = state.managed;
+  const L = m.isLong;
+  const stopHit = L ? b.l <= m.stop : b.h >= m.stop;
+  const targetHit = L ? b.h >= m.target : b.l <= m.target;
+  if (stopHit) {
+    const fill = L ? Math.min(m.stop, b.o) : Math.max(m.stop, b.o);
+    m.realized += m.remaining * rAt(m, fill);
+    m.remaining = 0;
+    m.exited = true;
+    m.exitReason = Math.abs(m.stop - m.entry) < 1e-9 ? "BE" : m.trailing ? "TRAIL" : "STOP";
+  } else if (targetHit) {
+    const fill = L ? Math.max(m.target, b.o) : Math.min(m.target, b.o);
+    m.realized += m.remaining * rAt(m, fill);
+    m.remaining = 0;
+    m.exited = true;
+    m.exitReason = "TARGET";
+  } else if (m.trailing) {
+    const trail = L ? b.c - m.risk : b.c + m.risk;
+    if (L ? trail > m.stop : trail < m.stop) m.stop = trail;
+  }
+  if (m.exited && m.actions.length) {
+    addMarker({
+      time: b.t, position: L ? "aboveBar" : "belowBar", color: "#f5a524", shape: "circle",
+      text: `MGD ${m.exitReason} ${m.realized > 0 ? "+" : ""}${m.realized.toFixed(2)}R`,
+    });
+  }
+  m.peak = Math.max(m.peak, managedR(b.c));
+  updateManageUI();
+}
+
+function updateManageUI() {
+  const m = state.managed;
+  if (!m) return;
+  const cur = managedR(lastDeliveredClose());
+  $("mReadout").textContent =
+    `${cur > 0 ? "+" : ""}${cur.toFixed(2)}R · ${Math.round(m.remaining * 100)}% on` +
+    (m.exited ? ` · out (${m.exitReason})` : "");
+  $("mHalf").disabled = m.exited || m.halfUsed;
+  $("mBe").disabled = m.exited || m.beUsed;
+  $("mTrail").disabled = m.exited;
+}
+
+async function postManaged() {
+  const m = state.managed;
+  if (!m) return;
+  try {
+    await api(`/api/scenarios/${state.scenario.id}/managed`,
+      { r: Math.round(m.final * 100) / 100, actions: m.actions });
+  } catch {
+    // best-effort: the plan outcome is already in the training log
+  }
 }
 
 function startTimer() {
@@ -721,7 +823,9 @@ function stepPlayback() {
   const bucket = aggStep(state.agg, b);
   candles.update(toCandle(bucket));
   volume.update(volBar(bucket));
-  if (anyIndOn()) renderIndicators();
+  // At MAX speed indicators redraw once at the end, not per bar.
+  if (state.speed !== 0 && anyIndOn()) renderIndicators();
+  if (state.managed && !state.managed.exited) manageBar(b);
   updateLivePnl(b);
   const u = reveal.user.outcome;
   if (u && state.playIdx === u.exitBarIndex) {
@@ -740,21 +844,21 @@ function stepPlayback() {
 
 function updateLivePnl(bar) {
   const el = $("livePnl");
-  const u = state.reveal.user.outcome;
-  if (!u) { el.textContent = "flat"; el.className = "live-pnl"; return; }
-  let r;
-  if (state.playIdx >= u.exitBarIndex) {
-    r = u.r;
-  } else {
-    const risk = Math.abs(u.entryFill - state.userSpec.stop);
-    r = (state.userSpec.isLong ? bar.c - u.entryFill : u.entryFill - bar.c) / risk;
-  }
+  if (!state.reveal.user.outcome) { el.textContent = "flat"; el.className = "live-pnl"; return; }
+  const r = state.managed ? managedR(bar.c) : 0;
   el.textContent = `${r > 0 ? "+" : ""}${r.toFixed(2)}R`;
   el.className = "live-pnl " + (r > 0.005 ? "pos" : r < -0.005 ? "neg" : "");
 }
 
 function finishPlayback() {
   stopTimer();
+  if (state.managed) {
+    const m = state.managed;
+    if (!m.exited) m.exitReason = "END";
+    m.final = m.exited ? m.realized : managedR(lastDeliveredClose());
+    postManaged();
+  }
+  if (anyIndOn()) renderIndicators();
   applyVisibleRange();
   showResult();
   setPhase("revealed");
@@ -796,10 +900,20 @@ function showResult() {
   const modelOutcome = verdict("modelDir", "modelR", "modelDetail", rv.model);
   $("modelRationale").textContent = rv.model.rationale || "";
 
+  const m = state.managed;
+  if (m && userOutcome) {
+    $("youDetail").textContent +=
+      ` · managed ${m.final > 0 ? "+" : ""}${m.final.toFixed(2)}R (${m.actions.join(", ") || "no actions"})`;
+    $("youR").textContent = `${m.final > 0 ? "+" : ""}${m.final.toFixed(2)}R`;
+    $("youR").className = "v-r " + (m.final > 0 ? "pos" : m.final < 0 ? "neg" : "flat");
+  }
+
   if (userOutcome) {
+    const finalR = m ? m.final : userOutcome.r;
+    const peakR = m ? Math.max(m.peak, 0) : userOutcome.mfeR;
     state.stats.trades += 1;
-    state.stats.youR += userOutcome.r;
-    state.stats.gbSum += Math.max(0, userOutcome.mfeR - userOutcome.r);
+    state.stats.youR += finalR;
+    state.stats.gbSum += Math.max(0, peakR - finalR);
   }
   if (modelOutcome) state.stats.modelR += modelOutcome.r;
   localStorage.setItem(LS.stats, JSON.stringify(state.stats));
@@ -903,6 +1017,38 @@ function wire() {
 
   $("cryptoToggle").checked = localStorage.getItem(LS.crypto) !== "false";
   $("cryptoToggle").onchange = () => localStorage.setItem(LS.crypto, $("cryptoToggle").checked);
+
+  $("phaseSelect").value = localStorage.getItem(LS.phase) || "ANY";
+  $("phaseSelect").onchange = () => localStorage.setItem(LS.phase, $("phaseSelect").value);
+
+  $("mHalf").onclick = () => {
+    const m = state.managed;
+    if (!m || m.exited || m.halfUsed || state.phase !== "playing") return;
+    const price = lastDeliveredClose();
+    m.realized += (m.remaining / 2) * rAt(m, price);
+    m.remaining /= 2;
+    m.halfUsed = true;
+    m.actions.push(`HALF@${rAt(m, price) > 0 ? "+" : ""}${rAt(m, price).toFixed(2)}R`);
+    $("mHalf").classList.add("used");
+    updateManageUI();
+  };
+  $("mBe").onclick = () => {
+    const m = state.managed;
+    if (!m || m.exited || m.beUsed || state.phase !== "playing") return;
+    if (m.isLong ? m.entry > m.stop : m.entry < m.stop) m.stop = m.entry;
+    m.beUsed = true;
+    m.actions.push("BE");
+    $("mBe").classList.add("used");
+    updateManageUI();
+  };
+  $("mTrail").onclick = () => {
+    const m = state.managed;
+    if (!m || m.exited || state.phase !== "playing") return;
+    m.trailing = !m.trailing;
+    m.actions.push(m.trailing ? "TRAIL_ON" : "TRAIL_OFF");
+    $("mTrail").classList.toggle("on", m.trailing);
+    updateManageUI();
+  };
 
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, select, textarea") || e.ctrlKey || e.metaKey || e.altKey) return;

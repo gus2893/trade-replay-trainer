@@ -70,15 +70,35 @@ class ScenarioServiceTest {
 			assertTrue(lastVisible.time().isBefore(s.futureBars.get(0).time()),
 					"context must end strictly before the future starts");
 			assertTrue(s.contextBars.size() >= 60, "model needs enough context");
-			if (s.assetClass == AssetClass.STOCK) {
-				assertTrue(s.futureBars.size() >= 12, "at least an hour of stock future");
-				assertEquals(lastVisible.time().atZone(ET).toLocalDate(),
-						s.futureBars.get(s.futureBars.size() - 1).time().atZone(ET).toLocalDate(),
-						"stock future must stay inside the cut session");
-			} else {
-				assertEquals(48, s.futureBars.size());
-			}
+			assertTrue(s.futureBars.size() <= s.contextBars.size(),
+					"future plays out at most as long as the shown context");
+			int minFuture = s.assetClass == AssetClass.STOCK ? 12 : 48;
+			assertTrue(s.futureBars.size() >= minFuture, "future long enough to resolve a trade");
 		}
+	}
+
+	@Test
+	void openPhaseCutsLandInTheFirstNinetyMinutes() {
+		ScenarioService service = service(11);
+		for (int i = 0; i < 20; i++) {
+			Scenario s = service.create(null, false, CutPhase.OPEN);
+			Bar cut = s.contextBars.get(s.contextBars.size() - 1);
+			long barsIntoSession = s.contextBars.stream()
+					.filter(b -> b.time().atZone(ET).toLocalDate().equals(cut.time().atZone(ET).toLocalDate()))
+					.count();
+			assertTrue(barsIntoSession - 1 <= 18,
+					"OPEN cut must land within the first 90 minutes, was bar " + (barsIntoSession - 1));
+		}
+	}
+
+	@Test
+	void selfPlayScenariosResolveWithoutBeingStored() {
+		ScenarioService service = service(13);
+		Scenario s = service.buildRandom(true, CutPhase.ANY);
+		service.resolveSelfPlay(s);
+		assertTrue(s.revealed());
+		assertNull(s.userOutcome(), "self-play user passes");
+		assertThrows(NoSuchElementException.class, () -> service.get(s.id), "ephemeral scenario is not stored");
 	}
 
 	@Test

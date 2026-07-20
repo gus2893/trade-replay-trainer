@@ -38,7 +38,7 @@ class CsvBarProviderTest {
 				TestBars.toCsv(TestBars.cryptoSeries(50, Instant.parse("2026-01-01T00:00:00Z"), 60000, 5)));
 
 		provider = new CsvBarProvider(new AppProperties(
-				List.of(stocksDir.toString()), List.of(cryptoDir.toString()), "unused", List.of()));
+				List.of(stocksDir.toString()), List.of(cryptoDir.toString()), "unused", List.of(), false, null));
 		provider.discover();
 	}
 

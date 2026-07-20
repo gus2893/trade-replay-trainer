@@ -35,6 +35,8 @@ market data comes from CSVs the labs have already cached.
 
 ## Run it
 
+Double-click **`Tape Dojo.bat`** (starts the backend and opens the app), or:
+
 ```bash
 cd backend
 ./mvnw spring-boot:run        # Windows: mvnw.cmd spring-boot:run
@@ -61,10 +63,22 @@ Expected sibling repos (configurable in `backend/src/main/resources/application.
 | `POST /api/scenarios/{id}/feedback` | Rate the model's call `{rating: GOOD\|BAD\|NEUTRAL, note?}` → training log |
 
 Scenario mechanics: stock cuts land between 30 minutes after the open and an hour before the
-close, with two prior sessions of context; the future is the rest of that session. Crypto gets
-48 hours of context and a 12-hour future. Fills are next-bar-open; when a bar touches both stop
-and target, the stop is assumed first (conservative). Same R-multiple conventions as the labs'
-ledgers.
+close (first 90 minutes only in the "At the open" ORB mode). **The future plays out for as
+many bars as the shown context** — up to 20 sessions forward for stocks (crossing overnight
+gaps) and 14 days for crypto — so multi-day holds are viable. Fills are next-bar-open; when a
+bar touches both stop and target, the stop is assumed first (conservative). Same R-multiple
+conventions as the labs' ledgers.
+
+**Manage the position while it plays**: take half off, move the stop to break-even, or toggle
+a 1R trail — the managed result is scored next to the set-and-forget plan and logged as a
+`managed` record, so exit management (the live account's give-back leak) is a trainable rep.
+
+**The learning loop runs itself**: a self-play trainer generates a scenario every ~15 s, lets
+the model trade it, and appends the outcome to the log; a retrainer refits a logistic
+win-probability filter from the log every 60 s (human GOOD/BAD ratings count double). Once
+it has 30+ samples the live model starts gating its breakouts with the learned P(win) —
+vetoed setups show up as SKIPs with the probability in the rationale. Weights persist in
+`backend/data/learned_model.json`.
 
 ## Training data
 

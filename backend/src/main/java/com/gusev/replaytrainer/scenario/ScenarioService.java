@@ -27,11 +27,13 @@ import com.gusev.replaytrainer.sim.TradeSpec;
  * Builds random practice windows out of the labs' cached series and holds the
  * per-scenario state. Windowing rules:
  * Stocks (5m RTH bars): pick a random session, cut somewhere between 30 min
- * after the open and one hour before the close; context is up to twenty prior
- * sessions (at least two) plus the current session up to the cut; the future
- * is the rest of that session.
- * Crypto (15m continuous): up to 1344 context bars (14 days, min 192),
- * 48 future bars (12h).
+ * after the open and one hour before the close (first 90 min only for
+ * CutPhase.OPEN); context is up to twenty prior sessions plus the current
+ * session up to the cut. The future runs for AS MANY BARS AS THE CONTEXT
+ * (data permitting, min 12) — it crosses session boundaries and overnight
+ * gaps, so multi-day holds are viable.
+ * Crypto (15m continuous): up to 1344 context bars (14 days, min 192); the
+ * future mirrors the context length (min 48 bars).
  */
 @Service
 public class ScenarioService {
@@ -39,11 +41,12 @@ public class ScenarioService {
 	private static final ZoneId MARKET_TZ = ZoneId.of("America/New_York");
 	private static final int STOCK_MIN_SESSION_BARS = 40;
 	private static final int STOCK_MIN_CUT_OFFSET = 6;
+	private static final int STOCK_OPEN_MAX_CUT_OFFSET = 18;
 	private static final int STOCK_MIN_FUTURE_BARS = 12;
 	private static final int STOCK_MAX_CONTEXT_SESSIONS = 20;
 	private static final int CRYPTO_MIN_CONTEXT_BARS = 192;
 	private static final int CRYPTO_MAX_CONTEXT_BARS = 1344;
-	private static final int CRYPTO_FUTURE_BARS = 48;
+	private static final int CRYPTO_MIN_FUTURE_BARS = 48;
 	private static final int MAX_STORED_SCENARIOS = 300;
 	private static final int MAX_PICK_ATTEMPTS = 25;
 
@@ -70,13 +73,26 @@ public class ScenarioService {
 	}
 
 	public synchronized Scenario create(String requestedSymbol, boolean includeCrypto) {
+		return create(requestedSymbol, includeCrypto, CutPhase.ANY);
+	}
+
+	public synchronized Scenario create(String requestedSymbol, boolean includeCrypto, CutPhase phase) {
 		boolean masked = requestedSymbol == null || requestedSymbol.isBlank();
-		List<SymbolInfo> pool = pool(requestedSymbol, includeCrypto);
-		for (int attempt = 0; attempt < MAX_PICK_ATTEMPTS; attempt++) {
+		Scenario scenario = attempt(pool(requestedSymbol, includeCrypto), masked, phase);
+		store.put(scenario.id, scenario);
+		return scenario;
+	}
+
+	/** A scenario that is NOT stored — used by the self-play trainer. */
+	public synchronized Scenario buildRandom(boolean includeCrypto, CutPhase phase) {
+		return attempt(pool(null, includeCrypto), true, phase);
+	}
+
+	private Scenario attempt(List<SymbolInfo> pool, boolean masked, CutPhase phase) {
+		for (int i = 0; i < MAX_PICK_ATTEMPTS; i++) {
 			SymbolInfo pick = pool.get(random.nextInt(pool.size()));
-			Scenario scenario = tryBuild(provider.series(pick.symbol()), masked);
+			Scenario scenario = tryBuild(provider.series(pick.symbol()), masked, phase);
 			if (scenario != null) {
-				store.put(scenario.id, scenario);
 				return scenario;
 			}
 		}
@@ -101,9 +117,9 @@ public class ScenarioService {
 		return pool;
 	}
 
-	private Scenario tryBuild(BarSeries series, boolean masked) {
+	private Scenario tryBuild(BarSeries series, boolean masked, CutPhase phase) {
 		int[] window = series.assetClass() == AssetClass.STOCK
-				? stockWindow(series.bars())
+				? stockWindow(series.bars(), phase)
 				: cryptoWindow(series.bars());
 		if (window == null) {
 			return null;
@@ -116,7 +132,7 @@ public class ScenarioService {
 	}
 
 	/** Returns {contextStart, cutIndex, futureEndInclusive} or null if the pick is unusable. */
-	private int[] stockWindow(List<Bar> bars) {
+	private int[] stockWindow(List<Bar> bars, CutPhase phase) {
 		List<int[]> sessions = sessions(bars);
 		if (sessions.size() < 3) {
 			return null;
@@ -128,23 +144,37 @@ public class ScenarioService {
 			return null;
 		}
 		int maxCutOffset = len - 1 - STOCK_MIN_FUTURE_BARS;
+		if (phase == CutPhase.OPEN) {
+			maxCutOffset = Math.min(maxCutOffset, STOCK_OPEN_MAX_CUT_OFFSET);
+		}
 		if (maxCutOffset <= STOCK_MIN_CUT_OFFSET) {
 			return null;
 		}
 		int cut = session[0] + STOCK_MIN_CUT_OFFSET
 				+ random.nextInt(maxCutOffset - STOCK_MIN_CUT_OFFSET + 1);
-		int ctxSession = Math.max(0, s - STOCK_MAX_CONTEXT_SESSIONS);
-		return new int[] { sessions.get(ctxSession)[0], cut, session[1] };
+		int ctxStart = sessions.get(Math.max(0, s - STOCK_MAX_CONTEXT_SESSIONS))[0];
+		int contextLen = cut - ctxStart + 1;
+		int futureEnd = Math.min(bars.size() - 1, cut + contextLen);
+		if (futureEnd - cut < STOCK_MIN_FUTURE_BARS) {
+			return null;
+		}
+		return new int[] { ctxStart, cut, futureEnd };
 	}
 
 	private int[] cryptoWindow(List<Bar> bars) {
 		int minCut = CRYPTO_MIN_CONTEXT_BARS - 1;
-		int maxCut = bars.size() - 1 - CRYPTO_FUTURE_BARS;
+		int maxCut = bars.size() - 1 - CRYPTO_MIN_FUTURE_BARS;
 		if (maxCut <= minCut) {
 			return null;
 		}
 		int cut = minCut + random.nextInt(maxCut - minCut + 1);
-		return new int[] { Math.max(0, cut - CRYPTO_MAX_CONTEXT_BARS + 1), cut, cut + CRYPTO_FUTURE_BARS };
+		int ctxStart = Math.max(0, cut - CRYPTO_MAX_CONTEXT_BARS + 1);
+		int contextLen = cut - ctxStart + 1;
+		int futureEnd = Math.min(bars.size() - 1, cut + contextLen);
+		if (futureEnd - cut < CRYPTO_MIN_FUTURE_BARS) {
+			return null;
+		}
+		return new int[] { ctxStart, cut, futureEnd };
 	}
 
 	/** Groups bars into RTH sessions by their New-York-time calendar date. */
@@ -186,17 +216,27 @@ public class ScenarioService {
 			throw new IllegalStateException("Place a trade (or skip) before playing the scenario forward");
 		}
 		if (!scenario.revealed()) {
-			TradeOutcome user = scenario.userTrade().direction() == TradeDirection.SKIP
-					? null
-					: TradeSimulator.simulate(scenario.userTrade(), scenario.futureBars);
-			TradeOutcome model = scenario.modelPlan.direction() == TradeDirection.SKIP
-					? null
-					: TradeSimulator.simulate(
-							new TradeSpec(scenario.modelPlan.direction(), scenario.modelPlan.stop(),
-									scenario.modelPlan.target()),
-							scenario.futureBars);
-			scenario.reveal(user, model);
+			resolve(scenario);
 		}
 		return scenario;
+	}
+
+	/** Self-play path: the "user" passes, outcomes resolve immediately. */
+	public void resolveSelfPlay(Scenario scenario) {
+		scenario.commitTrade(new TradeSpec(TradeDirection.SKIP, 0, 0));
+		resolve(scenario);
+	}
+
+	private static void resolve(Scenario scenario) {
+		TradeOutcome user = scenario.userTrade().direction() == TradeDirection.SKIP
+				? null
+				: TradeSimulator.simulate(scenario.userTrade(), scenario.futureBars);
+		TradeOutcome model = scenario.modelPlan.direction() == TradeDirection.SKIP
+				? null
+				: TradeSimulator.simulate(
+						new TradeSpec(scenario.modelPlan.direction(), scenario.modelPlan.stop(),
+								scenario.modelPlan.target()),
+						scenario.futureBars);
+		scenario.reveal(user, model);
 	}
 }

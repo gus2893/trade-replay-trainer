@@ -46,6 +46,8 @@ class ReplayTrainerFlowTest {
 		registry.add("trainer.crypto-data-dirs[0]", crypto::toString);
 		registry.add("trainer.crypto-data-dirs[1]", crypto::toString);
 		registry.add("trainer.training-log", trainingLog::toString);
+		registry.add("trainer.learned-model", () -> trainingLog.getParent().resolve("learned_model.json").toString());
+		registry.add("trainer.self-play", () -> "false");
 	}
 
 	@Autowired
@@ -103,11 +105,19 @@ class ReplayTrainerFlowTest {
 		assertTrue(lines.get(1).contains("\"type\":\"rating\""));
 		assertTrue(lines.get(1).contains("\"rating\":\"GOOD\""));
 
+		mvc.perform(post("/api/scenarios/" + id + "/managed")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"r\":0.55,\"actions\":[\"HALF@+0.8R\",\"BE\"]}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.recorded").value(true));
+
 		mvc.perform(get("/api/training/stats"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.outcomes").value(1))
 				.andExpect(jsonPath("$.ratings").value(1))
-				.andExpect(jsonPath("$.ratingCounts.GOOD").value(1));
+				.andExpect(jsonPath("$.managedRecords").value(1))
+				.andExpect(jsonPath("$.ratingCounts.GOOD").value(1))
+				.andExpect(jsonPath("$.learnedFilter.ready").value(false));
 	}
 
 	@Test
