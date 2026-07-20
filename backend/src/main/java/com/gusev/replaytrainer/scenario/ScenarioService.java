@@ -268,8 +268,8 @@ public class ScenarioService {
 		TradeOutcome model = scenario.modelPlan.direction() == TradeDirection.SKIP
 				? null
 				: TradeSimulator.simulate(
-						new TradeSpec(scenario.modelPlan.direction(), scenario.modelPlan.stop(),
-								scenario.modelPlan.target()),
+						new TradeSpec(scenario.modelPlan.direction(), scenario.modelPlan.entryType(),
+								scenario.modelPlan.limit(), scenario.modelPlan.stop(), scenario.modelPlan.target()),
 						scenario.futureBars);
 		scenario.reveal(user, model);
 	}

@@ -6,6 +6,7 @@ public record OutcomeDto(
 		double entryFill,
 		double exitPrice,
 		long exitTime,
+		int entryBarIndex,
 		int exitBarIndex,
 		String exitReason,
 		double r,
@@ -16,7 +17,7 @@ public record OutcomeDto(
 		if (o == null) {
 			return null;
 		}
-		return new OutcomeDto(o.entryFill(), o.exitPrice(), o.exitTime().getEpochSecond(), o.exitBarIndex(),
-				o.exitReason().name(), o.rMultiple(), o.mfeR(), o.maeR());
+		return new OutcomeDto(o.entryFill(), o.exitPrice(), o.exitTime().getEpochSecond(), o.entryBarIndex(),
+				o.exitBarIndex(), o.exitReason().name(), o.rMultiple(), o.mfeR(), o.maeR());
 	}
 }

@@ -45,7 +45,7 @@ public class AdaptiveModelTrader implements ModelTrader {
 					+ "\nLEARNED: filter (trained on " + filter.samples() + " outcomes) gives this only "
 					+ pct + " P(win) — below my 40% line → VETO, PASS", features);
 		}
-		return new TradePlan(plan.direction(), plan.stop(), plan.target(),
+		return new TradePlan(plan.direction(), plan.entryType(), plan.limit(), plan.stop(), plan.target(),
 				plan.rationale() + "\nLEARNED: filter (trained on " + filter.samples()
 						+ " outcomes) gives this " + pct + " P(win) → acceptable, taking it",
 				features);

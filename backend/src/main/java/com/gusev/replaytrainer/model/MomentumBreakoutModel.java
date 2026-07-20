@@ -22,6 +22,8 @@ public class MomentumBreakoutModel implements ModelTrader {
 	private static final int RANGE_LOOKBACK = 20;
 	private static final double STOP_ATR_MULT = 1.2;
 	private static final double TARGET_R_MULT = 2.0;
+	/** Beyond this many ATRs past the level, rest a limit at the retest instead of chasing. */
+	private static final double CHASE_ATR_LIMIT = 0.5;
 
 	@Override
 	public TradePlan proposeTrade(List<Bar> bars) {
@@ -70,28 +72,48 @@ public class MomentumBreakoutModel implements ModelTrader {
 			return TradePlan.skip(read + "\n" + trend + "\nTRIGGER: no measurable range on this tape → PASS", features);
 		}
 		if (close > rangeHigh && trendUp) {
-			double stop = close - STOP_ATR_MULT * atr;
-			double target = close + TARGET_R_MULT * (close - stop);
+			boolean extended = close - rangeHigh > CHASE_ATR_LIMIT * atr;
+			double basis = extended ? rangeHigh : close;
+			double stop = basis - STOP_ATR_MULT * atr;
+			double target = basis + TARGET_R_MULT * (basis - stop);
+			String entry = extended
+					? String.format(java.util.Locale.ROOT,
+							"ENTRY: already %.2f ATR past the level — LIMIT %.2f at the retest instead of chasing",
+							(close - rangeHigh) / atr, rangeHigh)
+					: "ENTRY: market — close is within half an ATR of the level, chase is acceptable";
 			String rationale = String.join("\n", read, trend,
 					String.format(java.util.Locale.ROOT,
 							"TRIGGER: close %.2f cleared the range high %.2f WITH the trend behind it → LONG", close,
 							rangeHigh),
+					entry,
 					String.format(java.util.Locale.ROOT,
 							"RISK: stop %.2f (entry − 1.2×ATR, under the breakout base) · target %.2f (2R)",
 							stop, target));
-			return new TradePlan(TradeDirection.LONG, round(stop), round(target), rationale, features);
+			return new TradePlan(TradeDirection.LONG,
+					extended ? com.gusev.replaytrainer.sim.EntryType.LIMIT : com.gusev.replaytrainer.sim.EntryType.MARKET,
+					extended ? round(rangeHigh) : 0, round(stop), round(target), rationale, features);
 		}
 		if (close < rangeLow && trendDown) {
-			double stop = close + STOP_ATR_MULT * atr;
-			double target = close - TARGET_R_MULT * (stop - close);
+			boolean extended = rangeLow - close > CHASE_ATR_LIMIT * atr;
+			double basis = extended ? rangeLow : close;
+			double stop = basis + STOP_ATR_MULT * atr;
+			double target = basis - TARGET_R_MULT * (stop - basis);
+			String entry = extended
+					? String.format(java.util.Locale.ROOT,
+							"ENTRY: already %.2f ATR past the level — LIMIT %.2f at the retest instead of chasing",
+							(rangeLow - close) / atr, rangeLow)
+					: "ENTRY: market — close is within half an ATR of the level, chase is acceptable";
 			String rationale = String.join("\n", read, trend,
 					String.format(java.util.Locale.ROOT,
 							"TRIGGER: close %.2f lost the range low %.2f WITH the trend behind it → SHORT", close,
 							rangeLow),
+					entry,
 					String.format(java.util.Locale.ROOT,
 							"RISK: stop %.2f (entry + 1.2×ATR, above the breakdown base) · target %.2f (2R)",
 							stop, target));
-			return new TradePlan(TradeDirection.SHORT, round(stop), round(target), rationale, features);
+			return new TradePlan(TradeDirection.SHORT,
+					extended ? com.gusev.replaytrainer.sim.EntryType.LIMIT : com.gusev.replaytrainer.sim.EntryType.MARKET,
+					extended ? round(rangeLow) : 0, round(stop), round(target), rationale, features);
 		}
 		String why;
 		if (close > rangeHigh) {

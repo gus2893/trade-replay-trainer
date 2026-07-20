@@ -48,7 +48,9 @@ public class ModelRetrainer {
 			JsonNode model = r.path("modelTrade");
 			JsonNode features = r.path("modelFeatures");
 			if (model.path("direction").asString("SKIP").equals("SKIP") || features.isMissingNode()
-					|| model.path("outcome").isMissingNode() || model.path("outcome").isNull()) {
+					|| model.path("outcome").isMissingNode() || model.path("outcome").isNull()
+					// an unfilled limit carries no win/loss information
+					|| model.path("outcome").path("exitReason").asString("").equals("NOT_FILLED")) {
 				continue;
 			}
 			int label = model.path("outcome").path("r").asDouble(0) > 0 ? 1 : 0;

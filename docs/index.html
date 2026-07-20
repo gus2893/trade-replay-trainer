@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=8">
+<link rel="stylesheet" href="styles.css?v=9">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥋</text></svg>">
 </head>
 <body>
@@ -53,7 +53,7 @@
   </label>
   <button id="testBackendBtn" class="btn btn-ghost">Test</button>
   <span id="backendStatus" class="backend-status"></span>
-  <p class="settings-hint">Run locally: <code>cd Trade_Replay_Trainer/backend &amp;&amp; mvnw spring-boot:run</code></p>
+  <p class="settings-hint">Backend: <code>tape-dojo.onrender.com</code> (free tier — may take ~1 min to wake)</p>
 </div>
 
 <main class="stage">
@@ -97,6 +97,13 @@
         <button class="dir-btn dir-skip" id="dirSkip">PASS</button>
       </div>
       <div class="ticket-fields" id="ticketFields">
+        <label>Entry
+          <select id="entryTypeSel">
+            <option value="MARKET">Market</option>
+            <option value="LIMIT">Limit</option>
+          </select>
+        </label>
+        <label class="hidden" id="limitRow">Limit <input type="number" id="limitInput" step="any"></label>
         <label>Stop <input type="number" id="stopInput" step="any"></label>
         <label>Target <input type="number" id="targetInput" step="any"></label>
         <div class="rr-row">R:R <span id="rrValue">—</span></div>
@@ -112,7 +119,7 @@
         </div>
         <div class="rr-row">Managed <span id="mReadout">—</span></div>
       </div>
-      <p class="ticket-note" id="ticketNote">Entry fills at the next bar's open — same as the sim ledger.</p>
+      <p class="ticket-note" id="ticketNote">Market entries fill at the next bar's open; limits fill when touched — or expire unfilled.</p>
       <p class="ticket-note">Keys: <b>N</b> new · <b>L/S/P</b> direction · <b>Enter</b> commit · <b>Space</b> play/pause · <b>1/2/3</b> rate</p>
     </div>
 
@@ -157,6 +164,6 @@
 <div class="toast hidden" id="toast"></div>
 
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

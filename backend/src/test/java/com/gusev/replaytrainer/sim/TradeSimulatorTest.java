@@ -92,6 +92,42 @@ class TradeSimulatorTest {
 	}
 
 	@Test
+	void limitFillsOnTouchThenRunsToTarget() {
+		TradeSpec spec = new TradeSpec(TradeDirection.LONG, EntryType.LIMIT, 99, 97.5, 102);
+		List<Bar> future = List.of(
+				bar(0, 100, 101, 99.5, 100.5), // never touches 99 — order rests
+				bar(1, 100.5, 100.8, 98.8, 99.2), // touch: fill at the limit
+				bar(2, 99.2, 102.5, 99.0, 102.2));
+		TradeOutcome o = TradeSimulator.simulate(spec, future);
+		assertEquals(1, o.entryBarIndex());
+		assertEquals(99, o.entryFill());
+		assertEquals(TradeOutcome.ExitReason.TARGET, o.exitReason());
+		assertEquals(2.0, o.rMultiple());
+	}
+
+	@Test
+	void limitNeverTouchedExpiresUnfilled() {
+		TradeSpec spec = new TradeSpec(TradeDirection.LONG, EntryType.LIMIT, 95, 93, 99);
+		List<Bar> future = List.of(bar(0, 100, 101, 99, 100.5), bar(1, 100.5, 102, 100, 101));
+		TradeOutcome o = TradeSimulator.simulate(spec, future);
+		assertEquals(TradeOutcome.ExitReason.NOT_FILLED, o.exitReason());
+		assertEquals(0.0, o.rMultiple());
+	}
+
+	@Test
+	void limitGapThroughFillsAtTheBetterOpen() {
+		TradeSpec spec = new TradeSpec(TradeDirection.LONG, EntryType.LIMIT, 99, 97, 100);
+		List<Bar> future = List.of(
+				bar(0, 98, 99.5, 97.8, 99), // opens below the limit: price improvement
+				bar(1, 99, 100.5, 98.5, 100.2));
+		TradeOutcome o = TradeSimulator.simulate(spec, future);
+		assertEquals(0, o.entryBarIndex());
+		assertEquals(98, o.entryFill());
+		assertEquals(TradeOutcome.ExitReason.TARGET, o.exitReason());
+		assertEquals(2.0, o.rMultiple());
+	}
+
+	@Test
 	void skipCannotBeSimulated() {
 		assertThrows(IllegalArgumentException.class,
 				() -> TradeSimulator.simulate(new TradeSpec(TradeDirection.SKIP, 0, 0), List.of(bar(0, 1, 1, 1, 1))));

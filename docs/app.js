@@ -577,6 +577,9 @@ async function newScenario() {
   document.querySelectorAll(".dir-btn").forEach((b) => b.classList.remove("selected"));
   $("stopInput").value = "";
   $("targetInput").value = "";
+  $("limitInput").value = "";
+  $("entryTypeSel").value = "MARKET";
+  $("limitRow").classList.add("hidden");
   $("ticketFields").style.opacity = 1;
   $("rrValue").textContent = "—";
   $("livePnl").textContent = "";
@@ -609,6 +612,19 @@ function visibleAtr(n = 14) {
   return count ? sum / count : 0;
 }
 
+function isLimitEntry() {
+  return $("entryTypeSel").value === "LIMIT";
+}
+
+/** The intended entry price: the limit when resting one, else the last close. */
+function entryBasis() {
+  if (isLimitEntry()) {
+    const lim = parseFloat($("limitInput").value);
+    if (lim > 0) return lim;
+  }
+  return state.scenario.lastClose;
+}
+
 function selectDirection(dir) {
   if (!state.scenario || state.phase !== "loaded") return;
   state.direction = dir;
@@ -618,8 +634,13 @@ function selectDirection(dir) {
   if (dir !== "SKIP") {
     const close = state.scenario.lastClose;
     const atr = visibleAtr();
-    const stop = dir === "LONG" ? close - 1.2 * atr : close + 1.2 * atr;
-    const target = dir === "LONG" ? close + 2 * (close - stop) : close - 2 * (stop - close);
+    if (isLimitEntry()) {
+      const lim = dir === "LONG" ? close - 0.5 * atr : close + 0.5 * atr;
+      $("limitInput").value = lim.toFixed(4);
+    }
+    const basis = entryBasis();
+    const stop = dir === "LONG" ? basis - 1.2 * atr : basis + 1.2 * atr;
+    const target = dir === "LONG" ? basis + 2 * (basis - stop) : basis - 2 * (stop - basis);
     $("stopInput").value = stop.toFixed(4);
     $("targetInput").value = target.toFixed(4);
   }
@@ -630,19 +651,26 @@ function selectDirection(dir) {
 function updateRR() {
   const el = $("rrValue");
   if (state.direction === "SKIP" || !state.direction) { el.textContent = "—"; return; }
-  const close = state.scenario.lastClose;
+  const basis = entryBasis();
   const stop = parseFloat($("stopInput").value);
   const target = parseFloat($("targetInput").value);
-  const risk = state.direction === "LONG" ? close - stop : stop - close;
-  const reward = state.direction === "LONG" ? target - close : close - target;
+  const risk = state.direction === "LONG" ? basis - stop : stop - basis;
+  const reward = state.direction === "LONG" ? target - basis : basis - target;
   el.textContent = risk > 0 && reward > 0 ? `1 : ${(reward / risk).toFixed(2)}` : "invalid";
 }
 
 async function commitTrade() {
   if (!state.direction) return;
+  const limitMode = state.direction !== "SKIP" && isLimitEntry();
   const body = state.direction === "SKIP"
     ? { direction: "SKIP" }
-    : { direction: state.direction, stop: parseFloat($("stopInput").value), target: parseFloat($("targetInput").value) };
+    : {
+        direction: state.direction,
+        entryType: limitMode ? "LIMIT" : "MARKET",
+        limit: limitMode ? parseFloat($("limitInput").value) : null,
+        stop: parseFloat($("stopInput").value),
+        target: parseFloat($("targetInput").value),
+      };
   try {
     await api(`/api/scenarios/${state.scenario.id}/trade`, body);
   } catch (e) {
@@ -651,15 +679,18 @@ async function commitTrade() {
   }
   if (state.direction !== "SKIP") {
     const isLong = state.direction === "LONG";
-    addPriceLine(state.scenario.lastClose, "#f5a524", "you", false);
+    addPriceLine(limitMode ? body.limit : state.scenario.lastClose, "#f5a524",
+      limitMode ? "you lim" : "you", !limitMode);
     addPriceLine(body.stop, "#f5484d", "stop");
     addPriceLine(body.target, "#2dd48f", "target");
-    state.userSpec = { isLong, stop: body.stop, target: body.target };
+    state.userSpec = { isLong, stop: body.stop, target: body.target, limit: limitMode ? body.limit : null };
   } else {
     state.userSpec = null;
   }
   setPhase("armed");
-  toast("Trade locked. The model has committed too — hit PLAY (space).");
+  toast(limitMode
+    ? "Limit resting. The model has committed too — hit PLAY (space)."
+    : "Trade locked. The model has committed too — hit PLAY (space).");
 }
 
 /* ── playback ──────────────────────────────────────────── */
@@ -681,22 +712,27 @@ async function play() {
     addPriceLine(reveal.model.stop, "#38bdf8", "model stop");
     addPriceLine(reveal.model.target, "#38bdf8", "model tgt");
   }
-  const firstFuture = reveal.futureBars[0];
-  if (state.userSpec) {
+  const u = reveal.user.outcome;
+  if (state.userSpec && u && u.exitReason !== "NOT_FILLED") {
+    const fillBar = reveal.futureBars[u.entryBarIndex] || reveal.futureBars[0];
     addMarker({
-      time: firstFuture.t, position: state.userSpec.isLong ? "belowBar" : "aboveBar",
-      color: "#f5a524", shape: state.userSpec.isLong ? "arrowUp" : "arrowDown", text: "YOU",
+      time: fillBar.t, position: state.userSpec.isLong ? "belowBar" : "aboveBar",
+      color: "#f5a524", shape: state.userSpec.isLong ? "arrowUp" : "arrowDown",
+      text: state.userSpec.limit ? "YOU (lim)" : "YOU",
     });
   }
-  if (reveal.model.direction !== "SKIP") {
+  const mo = reveal.model.outcome;
+  if (reveal.model.direction !== "SKIP" && mo && mo.exitReason !== "NOT_FILLED") {
+    const fillBar = reveal.futureBars[mo.entryBarIndex] || reveal.futureBars[0];
     addMarker({
-      time: firstFuture.t, position: reveal.model.direction === "LONG" ? "belowBar" : "aboveBar",
-      color: "#38bdf8", shape: reveal.model.direction === "LONG" ? "arrowUp" : "arrowDown", text: "MODEL",
+      time: fillBar.t, position: reveal.model.direction === "LONG" ? "belowBar" : "aboveBar",
+      color: "#38bdf8", shape: reveal.model.direction === "LONG" ? "arrowUp" : "arrowDown",
+      text: reveal.model.entryType === "LIMIT" ? "MODEL (lim)" : "MODEL",
     });
   }
 
-  if (state.userSpec && reveal.user.outcome) {
-    initManaged(reveal.user.outcome.entryFill);
+  if (state.userSpec && u && u.exitReason !== "NOT_FILLED") {
+    initManaged(u.entryFill, u.entryBarIndex);
   }
 
   state.playIdx = 0;
@@ -709,9 +745,10 @@ async function play() {
 
 /* ── managed-position drills (partials / break-even / trail) ── */
 
-function initManaged(entryFill) {
+function initManaged(entryFill, entryBarIndex) {
   state.managed = {
     entry: entryFill,
+    startIdx: entryBarIndex || 0,
     isLong: state.userSpec.isLong,
     stop: state.userSpec.stop,
     target: state.userSpec.target,
@@ -746,6 +783,7 @@ function lastDeliveredClose() {
 
 function manageBar(b) {
   const m = state.managed;
+  if (state.playIdx < m.startIdx) return; // limit order not filled yet
   const L = m.isLong;
   const stopHit = L ? b.l <= m.stop : b.h >= m.stop;
   const targetHit = L ? b.h >= m.target : b.l <= m.target;
@@ -852,7 +890,10 @@ function stepPlayback() {
 
 function updateLivePnl(bar) {
   const el = $("livePnl");
-  if (!state.reveal.user.outcome) { el.textContent = "flat"; el.className = "live-pnl"; return; }
+  const u = state.reveal.user.outcome;
+  if (!u) { el.textContent = "flat"; el.className = "live-pnl"; return; }
+  if (u.exitReason === "NOT_FILLED") { el.textContent = "no fill"; el.className = "live-pnl"; return; }
+  if (state.playIdx < u.entryBarIndex) { el.textContent = "resting…"; el.className = "live-pnl"; return; }
   const r = state.managed ? managedR(bar.c) : 0;
   el.textContent = `${r > 0 ? "+" : ""}${r.toFixed(2)}R`;
   el.className = "live-pnl " + (r > 0.005 ? "pos" : r < -0.005 ? "neg" : "");
@@ -882,12 +923,20 @@ function verdict(elDir, elR, elDetail, report) {
     $(elDetail).textContent = "no trade taken";
     return null;
   }
+  if (report.outcome && report.outcome.exitReason === "NOT_FILLED") {
+    $(elDir).textContent = report.direction + " · NO FILL";
+    $(elR).textContent = "0R";
+    $(elR).className = "v-r flat";
+    $(elDetail).textContent = `limit ${fmtPrice(report.limit)} was never touched — no risk taken`;
+    return null;
+  }
   const o = report.outcome;
   $(elDir).textContent = report.direction;
   $(elR).textContent = `${o.r > 0 ? "+" : ""}${o.r}R`;
   $(elR).className = "v-r " + (o.r > 0 ? "pos" : o.r < 0 ? "neg" : "flat");
   const gaveBack = Math.max(0, o.mfeR - o.r);
   $(elDetail).textContent =
+    (report.entryType === "LIMIT" ? `limit fill · ` : "") +
     `in ${fmtPrice(o.entryFill)} → out ${fmtPrice(o.exitPrice)} (${o.exitReason})` +
     ` · peak ${o.mfeR > 0 ? "+" : ""}${o.mfeR}R` +
     (gaveBack > 0.05 ? ` · gave back ${gaveBack.toFixed(2)}R` : "");
@@ -1002,6 +1051,15 @@ function wire() {
   $("dirSkip").onclick = () => selectDirection("SKIP");
   $("stopInput").oninput = updateRR;
   $("targetInput").oninput = updateRR;
+  $("limitInput").oninput = updateRR;
+  $("entryTypeSel").onchange = () => {
+    $("limitRow").classList.toggle("hidden", !isLimitEntry());
+    if (state.phase === "loaded" && state.direction && state.direction !== "SKIP") {
+      selectDirection(state.direction); // re-prefill stops around the new entry basis
+    } else {
+      updateRR();
+    }
+  };
   $("commitBtn").onclick = commitTrade;
   $("playBtn").onclick = play;
 
@@ -1140,19 +1198,17 @@ async function boot() {
   buildIndPanel();
   renderStats();
   setPhase("idle");
-  $("emptyHint").textContent = "Looking for a backend (local, then hosted — the hosted one may take ~1 min to wake)…";
+  $("emptyHint").textContent = "Connecting to the backend (may take ~1 min if it's waking up)…";
   if (await pickBackend()) {
     try {
       await loadSymbols();
-      $("emptyHint").textContent =
-        `${state.symbols.length} instruments via ${state.backend.includes("localhost") ? "local backend" : "hosted backend"} — hit NEW SCENARIO (or press N)`;
+      $("emptyHint").textContent = `${state.symbols.length} instruments loaded — hit NEW SCENARIO (or press N)`;
       return;
     } catch {
       // fall through to the offline hint
     }
   }
-  $("emptyHint").textContent =
-    "No backend found. Local: double-click Tape Dojo.bat. Hosted: check the Render service, then set its URL in ⚙.";
+  $("emptyHint").textContent = "Backend unreachable — it may still be waking up; retry in a minute or set a URL in ⚙.";
   $("settingsPanel").classList.remove("hidden");
 }
 
