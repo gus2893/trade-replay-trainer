@@ -32,8 +32,8 @@ import com.gusev.replaytrainer.sim.TradeSpec;
  * session up to the cut. The future runs for AS MANY BARS AS THE CONTEXT
  * (data permitting, min 12) — it crosses session boundaries and overnight
  * gaps, so multi-day holds are viable.
- * Crypto (15m continuous): up to 1344 context bars (14 days, min 192); the
- * future mirrors the context length (min 48 bars).
+ * Continuous markets (crypto 15m, forex 60m): 7-30 days of context; the
+ * future mirrors the context length (min 12 hours).
  */
 @Service
 public class ScenarioService {
@@ -44,6 +44,8 @@ public class ScenarioService {
 	private static final int STOCK_OPEN_MAX_CUT_OFFSET = 18;
 	private static final int STOCK_MIN_FUTURE_BARS = 12;
 	private static final int STOCK_MAX_CONTEXT_SESSIONS = 20;
+	/** Every scenario should carry enough tape to actually read: prefer >= 10 prior sessions. */
+	private static final int STOCK_MIN_PRIOR_SESSIONS = 10;
 	private static final int MAX_STORED_SCENARIOS = 300;
 	private static final int MAX_PICK_ATTEMPTS = 40;
 	/** Share of scenarios curated to be real setups; the rest are chop, so passing stays a skill. */
@@ -159,7 +161,12 @@ public class ScenarioService {
 		if (sessions.size() < 3) {
 			return null;
 		}
-		int s = 2 + random.nextInt(sessions.size() - 2);
+		// Prefer 10+ prior sessions of context; degrade gracefully on short series.
+		int minPrior = Math.min(STOCK_MIN_PRIOR_SESSIONS, Math.max(2, sessions.size() - 3));
+		if (sessions.size() <= minPrior) {
+			return null;
+		}
+		int s = minPrior + random.nextInt(sessions.size() - minPrior);
 		int[] session = sessions.get(s);
 		int len = session[1] - session[0] + 1;
 		if (len < STOCK_MIN_SESSION_BARS) {
@@ -185,8 +192,9 @@ public class ScenarioService {
 
 	/** Continuous markets (crypto 15m, forex 60m): windows scale with bar size. */
 	private int[] continuousWindow(List<Bar> bars, int barMinutes) {
-		int minContext = 2 * 1440 / barMinutes; // 2 days
-		int maxContext = 14 * 1440 / barMinutes; // 14 days
+		// Prefer 7 days of context (up to 30); degrade gracefully on short series.
+		int minContext = Math.min(7 * 1440 / barMinutes, Math.max(2 * 1440 / barMinutes, bars.size() / 3));
+		int maxContext = 30 * 1440 / barMinutes;
 		int minFuture = 12 * 60 / barMinutes; // 12 hours
 		int minCut = minContext - 1;
 		int maxCut = bars.size() - 1 - minFuture;

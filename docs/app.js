@@ -516,7 +516,7 @@ function setPhase(phase) {
 function buildTfButtons() {
   const group = $("tfGroup");
   group.innerHTML = "";
-  for (const tf of TF_OPTIONS[state.scenario.assetClass]) {
+  for (const tf of TF_OPTIONS[state.scenario.assetClass] || [state.baseTf]) {
     const b = document.createElement("button");
     b.className = "tf-btn" + (tf === state.viewTf ? " active" : "");
     b.textContent = tfLabel(tf);
@@ -555,12 +555,18 @@ async function newScenario() {
   $("mReadout").textContent = "—";
   state.baseTf = sc.barMinutes;
   state.viewTf = sc.barMinutes;
-  state.delivered = sc.bars.slice();
+  // Defensive: the chart hard-fails on non-ascending times, so never let one through.
+  state.delivered = sc.bars.filter((b, i, a) => i === 0 || b.t > a[i - 1].t);
 
-  clearOverlayLines();
-  buildTfButtons();
-  buildIndPanel();
-  renderAll();
+  try {
+    clearOverlayLines();
+    buildTfButtons();
+    buildIndPanel();
+    renderAll();
+  } catch (e) {
+    console.error(e);
+    toast("Chart render failed (" + e.message + ") — hard-refresh the page (Ctrl+F5)", true);
+  }
 
   const chip = $("chipSymbol");
   chip.textContent = sc.masked ? "?????" : sc.displaySymbol;
