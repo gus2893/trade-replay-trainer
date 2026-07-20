@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tape Dojo — price action replay trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥋</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">TAPE<span class="wm-slash">//</span>DOJO</div>
+  <div class="controls">
+    <label class="ctl">
+      <span class="ctl-label">Instrument</span>
+      <select id="symbolSelect">
+        <option value="">Random (mystery)</option>
+      </select>
+    </label>
+    <label class="ctl toggle-ctl" id="cryptoToggleWrap">
+      <span class="ctl-label">Crypto in pool</span>
+      <span class="toggle"><input type="checkbox" id="cryptoToggle" checked><span class="knob"></span></span>
+    </label>
+    <button id="newScenarioBtn" class="btn btn-amber">NEW SCENARIO</button>
+    <button id="settingsBtn" class="btn btn-ghost" title="Backend connection">⚙</button>
+  </div>
+  <div class="session-stats" id="sessionStats">
+    <span class="stat"><span class="stat-k">TRADES</span><span class="stat-v" id="statTrades">0</span></span>
+    <span class="stat"><span class="stat-k">YOU</span><span class="stat-v" id="statYouR">0.0R</span></span>
+    <span class="stat"><span class="stat-k">MODEL</span><span class="stat-v" id="statModelR">0.0R</span></span>
+  </div>
+</header>
+
+<div id="settingsPanel" class="settings-panel hidden">
+  <label>Backend URL
+    <input type="text" id="backendUrl" spellcheck="false">
+  </label>
+  <button id="testBackendBtn" class="btn btn-ghost">Test</button>
+  <span id="backendStatus" class="backend-status"></span>
+  <p class="settings-hint">Run locally: <code>cd Trade_Replay_Trainer/backend &amp;&amp; mvnw spring-boot:run</code></p>
+</div>
+
+<main class="stage">
+  <section class="chart-zone">
+    <div class="chart-head">
+      <div class="symbol-chip" id="symbolChip">
+        <span class="chip-symbol" id="chipSymbol">— — —</span>
+        <span class="chip-tf" id="chipTf"></span>
+      </div>
+      <div class="playback" id="playbackControls">
+        <span class="speed-label">SPEED</span>
+        <div class="speed-group" id="speedGroup">
+          <button data-speed="4" class="speed-btn active">1×</button>
+          <button data-speed="8" class="speed-btn">2×</button>
+          <button data-speed="16" class="speed-btn">4×</button>
+          <button data-speed="0" class="speed-btn">MAX</button>
+        </div>
+        <span class="live-pnl" id="livePnl"></span>
+      </div>
+    </div>
+    <div id="chart"></div>
+    <div class="chart-empty" id="chartEmpty">
+      <div class="empty-mark">🥋</div>
+      <p>Pull a random slice of history. Read the tape. Commit.<br>Then watch how it really played out.</p>
+      <p class="empty-hint" id="emptyHint"></p>
+    </div>
+  </section>
+
+  <aside class="rail">
+    <div class="panel ticket" id="ticketPanel">
+      <h2 class="panel-title">TRADE TICKET</h2>
+      <div class="dir-row">
+        <button class="dir-btn dir-long" id="dirLong">LONG</button>
+        <button class="dir-btn dir-short" id="dirShort">SHORT</button>
+        <button class="dir-btn dir-skip" id="dirSkip">PASS</button>
+      </div>
+      <div class="ticket-fields" id="ticketFields">
+        <label>Stop <input type="number" id="stopInput" step="any"></label>
+        <label>Target <input type="number" id="targetInput" step="any"></label>
+        <div class="rr-row">R:R <span id="rrValue">—</span></div>
+      </div>
+      <button class="btn btn-amber wide" id="commitBtn" disabled>COMMIT TRADE</button>
+      <button class="btn btn-play wide hidden" id="playBtn">▶ PLAY IT OUT</button>
+      <p class="ticket-note" id="ticketNote">Entry fills at the next bar's open — same as the sim ledger.</p>
+    </div>
+
+    <div class="panel result hidden" id="resultPanel">
+      <h2 class="panel-title">HOW IT PLAYED OUT</h2>
+      <div class="reveal-identity" id="revealIdentity"></div>
+      <div class="verdict-grid">
+        <div class="verdict you">
+          <div class="v-head">YOU</div>
+          <div class="v-dir" id="youDir">—</div>
+          <div class="v-r" id="youR">—</div>
+          <div class="v-detail" id="youDetail"></div>
+        </div>
+        <div class="verdict model">
+          <div class="v-head">MODEL</div>
+          <div class="v-dir" id="modelDir">—</div>
+          <div class="v-r" id="modelR">—</div>
+          <div class="v-detail" id="modelDetail"></div>
+        </div>
+      </div>
+      <div class="model-rationale" id="modelRationale"></div>
+      <div class="rating-block" id="ratingBlock">
+        <div class="rating-title">RATE THE MODEL'S CALL</div>
+        <div class="rating-row">
+          <button class="rate-btn rate-good" data-rating="GOOD">GOOD</button>
+          <button class="rate-btn rate-neutral" data-rating="NEUTRAL">NEUTRAL</button>
+          <button class="rate-btn rate-bad" data-rating="BAD">BAD</button>
+        </div>
+        <input type="text" id="ratingNote" placeholder="optional note for the training log">
+      </div>
+      <div class="rated-msg hidden" id="ratedMsg">Logged to the training set ✓</div>
+      <button class="btn btn-amber wide" id="nextBtn">NEXT SCENARIO</button>
+    </div>
+  </aside>
+</main>
+
+<div class="toast hidden" id="toast"></div>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

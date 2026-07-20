@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: replay-trainer
+  web:
+    resources:
+      # Serve the GitHub Pages frontend locally too, so http://localhost:8080 just works.
+      static-locations: classpath:/static/, file:../docs/
+
+trainer:
+  # Bar CSVs cached by the paper-trade labs (sibling repos). No API keys needed.
+  stock-data-dirs:
+    - ../../US_Stocks_Paper_Trade_Lab/data
+  crypto-data-dirs:
+    - ../../BTC_Paper_Trade_Lab/data
+    - ../../US_Stocks_Paper_Trade_Lab/data
+  training-log: ./data/training_log.jsonl
+  allowed-origins:
+    - https://gus2893.github.io
+    - http://localhost:8080
+    - http://127.0.0.1:8080
+    - http://localhost:5500

@@ -1,0 +1,5 @@
+backend/target/
+backend/data/
+*.log
+.DS_Store
+.gstack/
