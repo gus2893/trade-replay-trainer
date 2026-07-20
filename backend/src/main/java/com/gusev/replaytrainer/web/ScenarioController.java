@@ -32,8 +32,9 @@ public class ScenarioController {
 
 	@PostMapping
 	public ScenarioResponse create(@RequestBody(required = false) NewScenarioRequest request) {
-		NewScenarioRequest req = request == null ? new NewScenarioRequest(null, true, null) : request;
-		return ScenarioResponse.from(scenarios.create(req.symbol(), req.cryptoAllowed(), req.cutPhase()));
+		NewScenarioRequest req = request == null ? new NewScenarioRequest(null, true, true, null) : request;
+		return ScenarioResponse.from(
+				scenarios.create(req.symbol(), req.cryptoAllowed(), req.forexAllowed(), req.cutPhase()));
 	}
 
 	@PostMapping("/{id}/trade")

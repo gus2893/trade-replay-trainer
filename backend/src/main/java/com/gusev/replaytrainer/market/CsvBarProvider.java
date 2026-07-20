@@ -36,8 +36,9 @@ public class CsvBarProvider implements MarketDataProvider {
 
 	private static final Logger log = LoggerFactory.getLogger(CsvBarProvider.class);
 
-	private static final Pattern STOCK_FILE = Pattern.compile("hist_([A-Z0-9.\\-]+)_5Min_alpaca_(\\d+)d\\.csv");
+	private static final Pattern STOCK_FILE = Pattern.compile("hist_([A-Z0-9.\\-]+)_5Min_(?:alpaca|yahoo)_(\\d+)d\\.csv");
 	private static final Pattern CRYPTO_FILE = Pattern.compile("hist_([A-Z0-9.\\-]+)_(?:15m|15Min_crypto)_(\\d+)d\\.csv");
+	private static final Pattern FOREX_FILE = Pattern.compile("hist_([A-Z]{6})_60m_yahoo_(\\d+)d\\.csv");
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ssXXX");
 
 	private record Source(Path file, AssetClass assetClass, int barMinutes, int days) {
@@ -55,8 +56,14 @@ public class CsvBarProvider implements MarketDataProvider {
 	void discover() {
 		props.stockDataDirs().forEach(dir -> scan(Path.of(dir), STOCK_FILE, AssetClass.STOCK, 5));
 		props.cryptoDataDirs().forEach(dir -> scan(Path.of(dir), CRYPTO_FILE, AssetClass.CRYPTO, 15));
+		for (String dir : java.util.stream.Stream.concat(
+				props.stockDataDirs().stream(), props.cryptoDataDirs().stream()).distinct().toList()) {
+			scan(Path.of(dir), FOREX_FILE, AssetClass.FOREX, 60);
+		}
 		long stocks = sources.values().stream().filter(s -> s.assetClass() == AssetClass.STOCK).count();
-		log.info("Discovered {} symbols ({} stocks, {} crypto)", sources.size(), stocks, sources.size() - stocks);
+		long fx = sources.values().stream().filter(s -> s.assetClass() == AssetClass.FOREX).count();
+		log.info("Discovered {} symbols ({} stocks, {} crypto, {} forex)",
+				sources.size(), stocks, sources.size() - stocks - fx, fx);
 	}
 
 	private void scan(Path dir, Pattern pattern, AssetClass assetClass, int barMinutes) {

@@ -13,11 +13,12 @@ const LS = {
   backend: "tapedojo.backend",
   stats: "tapedojo.stats",
   crypto: "tapedojo.crypto",
+  forex: "tapedojo.forex",
   ind: "tapedojo.ind",
   phase: "tapedojo.phase",
 };
 
-const TF_OPTIONS = { STOCK: [5, 15, 30, 60], CRYPTO: [15, 60, 240] };
+const TF_OPTIONS = { STOCK: [5, 15, 30, 60], CRYPTO: [15, 60, 240], FOREX: [60, 240] };
 
 const INDICATORS = [
   { key: "vwap", label: "VWAP", color: "#f5a524cc" },
@@ -175,7 +176,7 @@ function aggStep(agg, b) {
   let bt;
   if (tf === state.baseTf) {
     bt = b.t;
-  } else if (state.scenario.assetClass === "CRYPTO") {
+  } else if (state.scenario.assetClass !== "STOCK") {
     bt = b.t - (b.t % (tf * 60));
   } else {
     const dk = etDayKey(b.t);
@@ -483,7 +484,7 @@ async function loadSymbols() {
   state.symbols = await api("/api/symbols");
   const sel = $("symbolSelect");
   sel.querySelectorAll("optgroup").forEach((g) => g.remove());
-  const groups = { STOCK: "Stocks", CRYPTO: "Crypto" };
+  const groups = { STOCK: "Stocks", CRYPTO: "Crypto", FOREX: "Forex" };
   for (const [cls, label] of Object.entries(groups)) {
     const items = state.symbols.filter((s) => s.assetClass === cls);
     if (!items.length) continue;
@@ -535,10 +536,11 @@ async function newScenario() {
   state.playIdx = 0;
   const symbol = $("symbolSelect").value || null;
   const includeCrypto = $("cryptoToggle").checked;
+  const includeForex = $("forexToggle").checked;
   const phase = $("phaseSelect").value;
   let sc;
   try {
-    sc = await api("/api/scenarios", { symbol, includeCrypto, phase });
+    sc = await api("/api/scenarios", { symbol, includeCrypto, includeForex, phase });
   } catch (e) {
     toast(e.message, true);
     return;
@@ -1043,6 +1045,9 @@ function wire() {
 
   $("cryptoToggle").checked = localStorage.getItem(LS.crypto) !== "false";
   $("cryptoToggle").onchange = () => localStorage.setItem(LS.crypto, $("cryptoToggle").checked);
+
+  $("forexToggle").checked = localStorage.getItem(LS.forex) !== "false";
+  $("forexToggle").onchange = () => localStorage.setItem(LS.forex, $("forexToggle").checked);
 
   $("phaseSelect").value = localStorage.getItem(LS.phase) || "ANY";
   $("phaseSelect").onchange = () => localStorage.setItem(LS.phase, $("phaseSelect").value);

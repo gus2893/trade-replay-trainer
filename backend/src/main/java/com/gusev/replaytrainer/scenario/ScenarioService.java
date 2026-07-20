@@ -44,9 +44,6 @@ public class ScenarioService {
 	private static final int STOCK_OPEN_MAX_CUT_OFFSET = 18;
 	private static final int STOCK_MIN_FUTURE_BARS = 12;
 	private static final int STOCK_MAX_CONTEXT_SESSIONS = 20;
-	private static final int CRYPTO_MIN_CONTEXT_BARS = 192;
-	private static final int CRYPTO_MAX_CONTEXT_BARS = 1344;
-	private static final int CRYPTO_MIN_FUTURE_BARS = 48;
 	private static final int MAX_STORED_SCENARIOS = 300;
 	private static final int MAX_PICK_ATTEMPTS = 40;
 	/** Share of scenarios curated to be real setups; the rest are chop, so passing stays a skill. */
@@ -75,19 +72,24 @@ public class ScenarioService {
 	}
 
 	public synchronized Scenario create(String requestedSymbol, boolean includeCrypto) {
-		return create(requestedSymbol, includeCrypto, CutPhase.ANY);
+		return create(requestedSymbol, includeCrypto, true, CutPhase.ANY);
 	}
 
 	public synchronized Scenario create(String requestedSymbol, boolean includeCrypto, CutPhase phase) {
+		return create(requestedSymbol, includeCrypto, true, phase);
+	}
+
+	public synchronized Scenario create(String requestedSymbol, boolean includeCrypto, boolean includeForex,
+			CutPhase phase) {
 		boolean masked = requestedSymbol == null || requestedSymbol.isBlank();
-		Scenario scenario = attempt(pool(requestedSymbol, includeCrypto), masked, phase);
+		Scenario scenario = attempt(pool(requestedSymbol, includeCrypto, includeForex), masked, phase);
 		store.put(scenario.id, scenario);
 		return scenario;
 	}
 
 	/** A scenario that is NOT stored — used by the self-play trainer. */
 	public synchronized Scenario buildRandom(boolean includeCrypto, CutPhase phase) {
-		return attempt(pool(null, includeCrypto), true, phase);
+		return attempt(pool(null, includeCrypto, true), true, phase);
 	}
 
 	/**
@@ -117,7 +119,7 @@ public class ScenarioService {
 		throw new IllegalStateException("Could not find a usable scenario window; is the lab data present?");
 	}
 
-	private List<SymbolInfo> pool(String requestedSymbol, boolean includeCrypto) {
+	private List<SymbolInfo> pool(String requestedSymbol, boolean includeCrypto, boolean includeForex) {
 		List<SymbolInfo> all = provider.symbols();
 		if (requestedSymbol != null && !requestedSymbol.isBlank()) {
 			return all.stream()
@@ -128,6 +130,7 @@ public class ScenarioService {
 		}
 		List<SymbolInfo> pool = all.stream()
 				.filter(s -> includeCrypto || s.assetClass() != AssetClass.CRYPTO)
+				.filter(s -> includeForex || s.assetClass() != AssetClass.FOREX)
 				.toList();
 		if (pool.isEmpty()) {
 			throw new IllegalStateException("No symbols available — check the configured data directories");
@@ -138,7 +141,7 @@ public class ScenarioService {
 	private Scenario tryBuild(BarSeries series, boolean masked, CutPhase phase) {
 		int[] window = series.assetClass() == AssetClass.STOCK
 				? stockWindow(series.bars(), phase)
-				: cryptoWindow(series.bars());
+				: continuousWindow(series.bars(), series.barMinutes());
 		if (window == null) {
 			return null;
 		}
@@ -180,17 +183,21 @@ public class ScenarioService {
 		return new int[] { ctxStart, cut, futureEnd };
 	}
 
-	private int[] cryptoWindow(List<Bar> bars) {
-		int minCut = CRYPTO_MIN_CONTEXT_BARS - 1;
-		int maxCut = bars.size() - 1 - CRYPTO_MIN_FUTURE_BARS;
+	/** Continuous markets (crypto 15m, forex 60m): windows scale with bar size. */
+	private int[] continuousWindow(List<Bar> bars, int barMinutes) {
+		int minContext = 2 * 1440 / barMinutes; // 2 days
+		int maxContext = 14 * 1440 / barMinutes; // 14 days
+		int minFuture = 12 * 60 / barMinutes; // 12 hours
+		int minCut = minContext - 1;
+		int maxCut = bars.size() - 1 - minFuture;
 		if (maxCut <= minCut) {
 			return null;
 		}
 		int cut = minCut + random.nextInt(maxCut - minCut + 1);
-		int ctxStart = Math.max(0, cut - CRYPTO_MAX_CONTEXT_BARS + 1);
+		int ctxStart = Math.max(0, cut - maxContext + 1);
 		int contextLen = cut - ctxStart + 1;
 		int futureEnd = Math.min(bars.size() - 1, cut + contextLen);
-		if (futureEnd - cut < CRYPTO_MIN_FUTURE_BARS) {
+		if (futureEnd - cut < minFuture) {
 			return null;
 		}
 		return new int[] { ctxStart, cut, futureEnd };

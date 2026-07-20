@@ -44,6 +44,9 @@ public class CloudDataBootstrap {
 	private static final DateTimeFormatter CSV_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 	private static final int CRYPTO_DAYS = 365;
 	private static final String[] CRYPTO_PRODUCTS = { "BTC-USD", "ETH-USD" };
+	private static final int FOREX_DAYS = 730;
+	private static final String[] FOREX_PAIRS = { "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD" };
+	private static final int YAHOO_STOCK_DAYS = 60;
 
 	private final AppProperties props;
 	private final ObjectMapper mapper;
@@ -67,7 +70,77 @@ public class CloudDataBootstrap {
 			throw new IllegalStateException("Cannot create data dir " + dir, e);
 		}
 		fetchCrypto(dir);
+		fetchForex(dir);
 		fetchStocks(dir);
+	}
+
+	/* ── Yahoo Finance (public, no key) ────────────────────── */
+
+	/** Forex majors: hourly bars, up to 2 years — Yahoo's deepest free intraday. */
+	private void fetchForex(Path dir) {
+		for (String pair : FOREX_PAIRS) {
+			Path file = dir.resolve("hist_" + pair + "_60m_yahoo_" + FOREX_DAYS + "d.csv");
+			if (Files.exists(file)) {
+				continue;
+			}
+			try {
+				List<String> rows = fetchYahoo(pair + "=X", "60m", "730d");
+				writeCsv(file, rows);
+				log.info("Bootstrapped {} ({} bars)", file.getFileName(), rows.size());
+			} catch (Exception e) {
+				log.warn("Forex bootstrap failed for {}: {}", pair, e.getMessage());
+			}
+		}
+	}
+
+	/** Keyless stock fallback: Yahoo caps 5-minute bars at ~60 days. */
+	private void fetchStocksFromYahoo(Path dir) {
+		for (String symbol : props.symbolsOrEmpty()) {
+			Path file = dir.resolve("hist_" + symbol + "_5Min_yahoo_" + YAHOO_STOCK_DAYS + "d.csv");
+			if (Files.exists(file)) {
+				continue;
+			}
+			try {
+				List<String> rows = fetchYahoo(symbol, "5m", "60d");
+				writeCsv(file, rows);
+				log.info("Bootstrapped {} ({} bars)", file.getFileName(), rows.size());
+			} catch (Exception e) {
+				log.warn("Yahoo stock bootstrap failed for {}: {}", symbol, e.getMessage());
+			}
+		}
+	}
+
+	private List<String> fetchYahoo(String yahooSymbol, String interval, String range)
+			throws IOException, InterruptedException {
+		String url = String.format(
+				"https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=%s&range=%s", yahooSymbol, interval,
+				range);
+		HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+				.timeout(Duration.ofSeconds(30))
+				.header("User-Agent", "Mozilla/5.0 (TapeDojo replay trainer)")
+				.build();
+		HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+		if (res.statusCode() >= 400) {
+			throw new IOException("Yahoo HTTP " + res.statusCode());
+		}
+		JsonNode result = mapper.readTree(res.body()).path("chart").path("result").get(0);
+		JsonNode ts = result.path("timestamp");
+		JsonNode quote = result.path("indicators").path("quote").get(0);
+		List<String> rows = new ArrayList<>();
+		for (int i = 0; i < ts.size(); i++) {
+			JsonNode o = quote.path("open").get(i);
+			JsonNode h = quote.path("high").get(i);
+			JsonNode l = quote.path("low").get(i);
+			JsonNode c = quote.path("close").get(i);
+			if (o == null || o.isNull() || h.isNull() || l.isNull() || c.isNull()) {
+				continue; // Yahoo pads gaps with nulls
+			}
+			double v = quote.path("volume").get(i).isNull() ? 0 : quote.path("volume").get(i).asDouble();
+			rows.add(csvRow(Instant.ofEpochSecond(ts.get(i).asLong()),
+					o.asDouble(), h.asDouble(), l.asDouble(), c.asDouble(), v));
+		}
+		Thread.sleep(400); // be polite to the unofficial endpoint
+		return rows;
 	}
 
 	/* ── Coinbase (public, no key) ─────────────────────────── */
@@ -112,10 +185,15 @@ public class CloudDataBootstrap {
 	/* ── Alpaca stocks (keys via env) ──────────────────────── */
 
 	private void fetchStocks(Path dir) {
+		if (props.symbolsOrEmpty().isEmpty()) {
+			return;
+		}
 		String key = System.getenv("APCA_API_KEY_ID");
 		String secret = System.getenv("APCA_API_SECRET_KEY");
-		if (key == null || secret == null || props.symbolsOrEmpty().isEmpty()) {
-			log.warn("Stock bootstrap skipped: set APCA_API_KEY_ID / APCA_API_SECRET_KEY and trainer.symbols");
+		if (key == null || secret == null) {
+			log.info("No Alpaca keys — falling back to Yahoo for stocks (5m bars, ~{}d of history)",
+					YAHOO_STOCK_DAYS);
+			fetchStocksFromYahoo(dir);
 			return;
 		}
 		int days = props.backfillDaysOrDefault();
