@@ -14,7 +14,7 @@ trainer:
   training-log: ./data/training_log.jsonl
   learned-model: ./data/learned_model.json
   bootstrap: true
-  backfill-days: 150
+  backfill-days: 400
   symbols:
     - SPY
     - QQQ
