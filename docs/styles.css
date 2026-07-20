@@ -363,3 +363,21 @@ select:focus, input:focus { border-color: var(--amber); }
   .chart-zone { border-right: none; min-height: 55vh; }
   .session-stats { margin-left: 0; }
 }
+
+/* timeframe switcher + overlay toggles */
+.tf-group { display: flex; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.tf-btn {
+  font-family: var(--mono); font-size: 11px;
+  background: transparent; color: var(--dim);
+  border: none; padding: 5px 10px; cursor: pointer;
+}
+.tf-btn.active { background: var(--amber-dim); color: var(--amber); }
+.overlay-group { display: flex; gap: 6px; }
+.ov-btn {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
+  background: transparent; color: var(--dim);
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 4px 8px; cursor: pointer;
+}
+.ov-btn.active { border-color: var(--amber); color: var(--amber); background: var(--amber-dim); }
+.ticket-note b { color: var(--dim); font-weight: 600; }

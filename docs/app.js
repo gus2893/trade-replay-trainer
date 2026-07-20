@@ -1,6 +1,10 @@
 /* TAPE DOJO — price action replay trainer
  * Static frontend (GitHub Pages). Talks to the local Spring Boot backend,
  * which slices random windows out of the paper-trade labs' cached bars.
+ *
+ * The backend always delivers BASE bars (5m stocks, 15m crypto). Playback
+ * steps base bars; the view timeframe is a client-side aggregation, so on
+ * 15m/1h/4h you watch the higher-TF candle form bar by bar.
  */
 "use strict";
 
@@ -8,7 +12,10 @@ const LS = {
   backend: "tapedojo.backend",
   stats: "tapedojo.stats",
   crypto: "tapedojo.crypto",
+  overlays: "tapedojo.overlays",
 };
+
+const TF_OPTIONS = { STOCK: [5, 15, 30, 60], CRYPTO: [15, 60, 240] };
 
 const state = {
   backend: localStorage.getItem(LS.backend) || "http://localhost:8080",
@@ -17,19 +24,28 @@ const state = {
   reveal: null,
   phase: "idle", // idle -> loaded -> armed -> playing -> revealed -> rated
   direction: null,
+  userSpec: null,
   speed: 4, // bars per second, 0 = instant
   timer: null,
+  paused: false,
   playIdx: 0,
   priceLines: [],
-  markers: [],
-  stats: JSON.parse(localStorage.getItem(LS.stats) || '{"trades":0,"youR":0,"modelR":0}'),
+  markers: [], // marker times are BASE bar times; remapped to buckets on render
+  baseTf: 5,
+  viewTf: 5,
+  delivered: [], // base bars shown so far (context + played future)
+  buckets: [], // delivered aggregated to viewTf
+  timeMap: new Map(), // base t -> bucket t
+  agg: null, // incremental aggregation cursor for playback
+  overlays: { vwap: false, ema: false, ...JSON.parse(localStorage.getItem(LS.overlays) || "{}") },
+  stats: { trades: 0, youR: 0, modelR: 0, gbSum: 0, ...JSON.parse(localStorage.getItem(LS.stats) || "{}") },
 };
 
 const $ = (id) => document.getElementById(id);
 
 /* ── chart ─────────────────────────────────────────────── */
 
-let chart, candles, volume;
+let chart, candles, volume, vwapLine, ema20Line, ema50Line;
 
 function tzForScenario() {
   return state.scenario && state.scenario.assetClass === "STOCK" ? "America/New_York" : "UTC";
@@ -39,6 +55,17 @@ function fmtTime(epochSec, withDate = false) {
   const opts = { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tzForScenario() };
   if (withDate) Object.assign(opts, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
   return new Intl.DateTimeFormat("en-US", opts).format(new Date(epochSec * 1000));
+}
+
+const dayKeyCache = new Map();
+function etDayKey(epochSec) {
+  let v = dayKeyCache.get(epochSec);
+  if (!v) {
+    v = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" })
+      .format(new Date(epochSec * 1000));
+    dayKeyCache.set(epochSec, v);
+  }
+  return v;
 }
 
 function initChart() {
@@ -63,14 +90,22 @@ function initChart() {
   });
   volume = chart.addHistogramSeries({ priceFormat: { type: "volume" }, priceScaleId: "vol" });
   chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+  const overlayOpts = { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  vwapLine = chart.addLineSeries({ ...overlayOpts, color: "#f5a524bb" });
+  ema20Line = chart.addLineSeries({ ...overlayOpts, color: "#38bdf8aa" });
+  ema50Line = chart.addLineSeries({ ...overlayOpts, color: "#9d7bd8aa" });
   new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })).observe(el);
+}
+
+function toCandle(b) {
+  return { time: b.t, open: b.o, high: b.h, low: b.l, close: b.c };
 }
 
 function volBar(b) {
   return { time: b.t, value: b.v, color: b.c >= b.o ? "#2dd48f33" : "#f5484d33" };
 }
 
-function clearOverlays() {
+function clearOverlayLines() {
   state.priceLines.forEach((l) => candles.removePriceLine(l));
   state.priceLines = [];
   state.markers = [];
@@ -89,8 +124,117 @@ function addPriceLine(price, color, title, dashed = true) {
 
 function addMarker(m) {
   state.markers.push(m);
-  state.markers.sort((a, b) => a.time - b.time);
-  candles.setMarkers(state.markers);
+  renderMarkers();
+}
+
+function renderMarkers() {
+  const mapped = state.markers
+    .map((m) => ({ ...m, time: state.timeMap.get(m.time) ?? m.time }))
+    .sort((a, b) => a.time - b.time);
+  candles.setMarkers(mapped);
+}
+
+/* ── timeframe aggregation ─────────────────────────────── */
+
+function tfLabel(tf) {
+  return tf < 60 ? `${tf}m` : `${tf / 60}h`;
+}
+
+/**
+ * Merge one base bar into the aggregation cursor; returns the (possibly new)
+ * current bucket. Stocks bucket by index-since-session-open so 1h bars align
+ * to 9:30 ET; crypto buckets by epoch floor.
+ */
+function aggStep(agg, b) {
+  const tf = state.viewTf;
+  let bt;
+  if (tf === state.baseTf) {
+    bt = b.t;
+  } else if (state.scenario.assetClass === "CRYPTO") {
+    bt = b.t - (b.t % (tf * 60));
+  } else {
+    const dk = etDayKey(b.t);
+    if (dk !== agg.day) {
+      agg.day = dk;
+      agg.idx = -1;
+    }
+    agg.idx++;
+    if (agg.idx % (tf / state.baseTf) === 0) agg.bucketStart = b.t;
+    bt = agg.bucketStart;
+  }
+  state.timeMap.set(b.t, bt);
+  const last = state.buckets[state.buckets.length - 1];
+  if (last && last.t === bt) {
+    last.h = Math.max(last.h, b.h);
+    last.l = Math.min(last.l, b.l);
+    last.c = b.c;
+    last.v += b.v;
+    return last;
+  }
+  const fresh = { t: bt, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v };
+  state.buckets.push(fresh);
+  return fresh;
+}
+
+function rebuildBuckets() {
+  state.buckets = [];
+  state.timeMap = new Map();
+  state.agg = { day: null, idx: -1, bucketStart: 0 };
+  for (const b of state.delivered) aggStep(state.agg, b);
+}
+
+function renderAll() {
+  rebuildBuckets();
+  candles.setData(state.buckets.map(toCandle));
+  volume.setData(state.buckets.map(volBar));
+  renderOverlays();
+  renderMarkers();
+  applyVisibleRange();
+}
+
+function applyVisibleRange() {
+  const n = state.buckets.length;
+  chart.timeScale().setVisibleLogicalRange({ from: Math.max(-2, n - 150), to: n + 4 });
+}
+
+/* ── indicator overlays ────────────────────────────────── */
+
+function renderOverlays() {
+  vwapLine.setData(state.overlays.vwap ? vwapData() : []);
+  const ema = state.overlays.ema;
+  ema20Line.setData(ema ? emaData(20) : []);
+  ema50Line.setData(ema ? emaData(50) : []);
+  $("ovVwap").classList.toggle("active", state.overlays.vwap);
+  $("ovEma").classList.toggle("active", state.overlays.ema);
+}
+
+/** Session-anchored VWAP: resets each ET day for stocks, each UTC day for crypto. */
+function vwapData() {
+  const out = [];
+  let day = null, cumPV = 0, cumV = 0;
+  for (const b of state.buckets) {
+    const dk = state.scenario.assetClass === "STOCK" ? etDayKey(b.t) : Math.floor(b.t / 86400);
+    if (dk !== day) {
+      day = dk;
+      cumPV = 0;
+      cumV = 0;
+    }
+    cumPV += ((b.h + b.l + b.c) / 3) * b.v;
+    cumV += b.v;
+    if (cumV > 0) out.push({ time: b.t, value: cumPV / cumV });
+  }
+  return out;
+}
+
+function emaData(period) {
+  const out = [];
+  const k = 2 / (period + 1);
+  let ema = null;
+  for (const b of state.buckets) {
+    ema = ema === null ? b.c : b.c * k + ema * (1 - k);
+    out.push({ time: b.t, value: ema });
+  }
+  return out.slice(period); // skip the noisy warm-up
 }
 
 /* ── backend ───────────────────────────────────────────── */
@@ -144,8 +288,27 @@ function setPhase(phase) {
   document.querySelectorAll("#ticketFields input, .dir-btn").forEach((el) => (el.disabled = armedOrLater));
 }
 
+function buildTfButtons() {
+  const group = $("tfGroup");
+  group.innerHTML = "";
+  for (const tf of TF_OPTIONS[state.scenario.assetClass]) {
+    const b = document.createElement("button");
+    b.className = "tf-btn" + (tf === state.viewTf ? " active" : "");
+    b.textContent = tfLabel(tf);
+    b.onclick = () => {
+      state.viewTf = tf;
+      group.querySelectorAll(".tf-btn").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      renderAll();
+    };
+    group.appendChild(b);
+  }
+}
+
 async function newScenario() {
-  stopPlayback();
+  stopTimer();
+  state.paused = false;
+  state.playIdx = 0;
   const symbol = $("symbolSelect").value || null;
   const includeCrypto = $("cryptoToggle").checked;
   let sc;
@@ -158,20 +321,24 @@ async function newScenario() {
   state.scenario = sc;
   state.reveal = null;
   state.direction = null;
+  state.userSpec = null;
+  state.baseTf = sc.barMinutes;
+  state.viewTf = sc.barMinutes;
+  state.delivered = sc.bars.slice();
 
-  clearOverlays();
-  candles.setData(sc.bars.map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c })));
-  volume.setData(sc.bars.map(volBar));
-  chart.timeScale().fitContent();
+  clearOverlayLines();
+  buildTfButtons();
+  renderAll();
 
   const chip = $("chipSymbol");
   chip.textContent = sc.masked ? "?????" : sc.displaySymbol;
   chip.classList.toggle("masked", sc.masked);
-  $("chipTf").textContent = `${sc.assetClass} · ${sc.barMinutes}m · last ${fmtPrice(sc.lastClose)}`;
+  $("chipTf").textContent = `${sc.assetClass} · ${sc.barMinutes}m base · last ${fmtPrice(sc.lastClose)}`;
 
   document.querySelectorAll(".dir-btn").forEach((b) => b.classList.remove("selected"));
   $("stopInput").value = "";
   $("targetInput").value = "";
+  $("ticketFields").style.opacity = 1;
   $("rrValue").textContent = "—";
   $("livePnl").textContent = "";
   $("livePnl").className = "live-pnl";
@@ -187,7 +354,7 @@ function fmtPrice(p) {
   return p >= 1000 ? p.toFixed(0) : p >= 100 ? p.toFixed(2) : p.toFixed(3);
 }
 
-/* ATR of the last visible bars, for stop/target prefills. */
+/* ATR of the last visible base bars, for stop/target prefills. */
 function visibleAtr(n = 14) {
   const bars = state.scenario.bars;
   const from = Math.max(1, bars.length - n);
@@ -208,8 +375,7 @@ function selectDirection(dir) {
   state.direction = dir;
   document.querySelectorAll(".dir-btn").forEach((b) => b.classList.remove("selected"));
   $(dir === "LONG" ? "dirLong" : dir === "SHORT" ? "dirShort" : "dirSkip").classList.add("selected");
-  const fields = $("ticketFields");
-  fields.style.opacity = dir === "SKIP" ? 0.35 : 1;
+  $("ticketFields").style.opacity = dir === "SKIP" ? 0.35 : 1;
   if (dir !== "SKIP") {
     const close = state.scenario.lastClose;
     const atr = visibleAtr();
@@ -254,7 +420,7 @@ async function commitTrade() {
     state.userSpec = null;
   }
   setPhase("armed");
-  toast("Trade locked. The model has committed too — hit PLAY.");
+  toast("Trade locked. The model has committed too — hit PLAY (space).");
 }
 
 /* ── playback ──────────────────────────────────────────── */
@@ -268,6 +434,7 @@ async function play() {
     return;
   }
   state.reveal = reveal;
+  state.paused = false;
   setPhase("playing");
 
   // Model's hand is revealed the moment you press play.
@@ -299,6 +466,7 @@ async function play() {
 
 function startTimer() {
   stopTimer();
+  state.paused = false;
   state.timer = setInterval(() => {
     stepPlayback();
     if (!state.reveal || state.playIdx >= state.reveal.futureBars.length) stopTimer();
@@ -310,17 +478,26 @@ function stopTimer() {
   state.timer = null;
 }
 
-function stopPlayback() {
-  stopTimer();
-  state.playIdx = 0;
+function togglePause() {
+  if (state.phase !== "playing") return;
+  if (state.timer) {
+    stopTimer();
+    state.paused = true;
+    toast("Paused — space to resume, or read the tape on another timeframe.");
+  } else {
+    startTimer();
+  }
 }
 
 function stepPlayback() {
   const reveal = state.reveal;
   if (!reveal || state.playIdx >= reveal.futureBars.length) return;
   const b = reveal.futureBars[state.playIdx];
-  candles.update({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c });
-  volume.update(volBar(b));
+  state.delivered.push(b);
+  const bucket = aggStep(state.agg, b);
+  candles.update(toCandle(bucket));
+  volume.update(volBar(bucket));
+  if (state.overlays.vwap || state.overlays.ema) renderOverlays();
   updateLivePnl(b);
   const u = reveal.user.outcome;
   if (u && state.playIdx === u.exitBarIndex) {
@@ -354,7 +531,7 @@ function updateLivePnl(bar) {
 
 function finishPlayback() {
   stopTimer();
-  chart.timeScale().fitContent();
+  applyVisibleRange();
   showResult();
   setPhase("revealed");
 }
@@ -367,16 +544,18 @@ function verdict(elDir, elR, elDetail, report) {
     $(elR).textContent = "0R";
     $(elR).className = "v-r flat";
     $(elDetail).textContent = "no trade taken";
-    return 0;
+    return null;
   }
   const o = report.outcome;
   $(elDir).textContent = report.direction;
   $(elR).textContent = `${o.r > 0 ? "+" : ""}${o.r}R`;
   $(elR).className = "v-r " + (o.r > 0 ? "pos" : o.r < 0 ? "neg" : "flat");
+  const gaveBack = Math.max(0, o.mfeR - o.r);
   $(elDetail).textContent =
     `in ${fmtPrice(o.entryFill)} → out ${fmtPrice(o.exitPrice)} (${o.exitReason})` +
-    ` · peak ${o.mfeR > 0 ? "+" : ""}${o.mfeR}R`;
-  return o.r;
+    ` · peak ${o.mfeR > 0 ? "+" : ""}${o.mfeR}R` +
+    (gaveBack > 0.05 ? ` · gave back ${gaveBack.toFixed(2)}R` : "");
+  return o;
 }
 
 function showResult() {
@@ -389,15 +568,16 @@ function showResult() {
   $("revealIdentity").textContent =
     `${rv.symbol} · ${rv.assetClass} · cut at ${fmtTime(rv.cutTime, true)} ${sc.assetClass === "STOCK" ? "ET" : "UTC"}`;
 
-  const youR = verdict("youDir", "youR", "youDetail", rv.user);
-  const modelR = verdict("modelDir", "modelR", "modelDetail", rv.model);
+  const userOutcome = verdict("youDir", "youR", "youDetail", rv.user);
+  const modelOutcome = verdict("modelDir", "modelR", "modelDetail", rv.model);
   $("modelRationale").textContent = rv.model.rationale || "";
 
-  if (rv.user.direction !== "SKIP") {
+  if (userOutcome) {
     state.stats.trades += 1;
-    state.stats.youR += youR;
+    state.stats.youR += userOutcome.r;
+    state.stats.gbSum += Math.max(0, userOutcome.mfeR - userOutcome.r);
   }
-  state.stats.modelR += modelR;
+  if (modelOutcome) state.stats.modelR += modelOutcome.r;
   localStorage.setItem(LS.stats, JSON.stringify(state.stats));
   renderStats();
 }
@@ -412,6 +592,10 @@ function renderStats() {
   };
   set("statYouR", s.youR);
   set("statModelR", s.modelR);
+  const gbAvg = s.trades ? s.gbSum / s.trades : 0;
+  const gbEl = $("statGiveback");
+  gbEl.textContent = `${gbAvg.toFixed(2)}R`;
+  gbEl.className = "stat-v " + (gbAvg > 0.5 ? "neg" : "");
 }
 
 async function rate(rating, btn) {
@@ -454,7 +638,7 @@ function wire() {
       document.querySelectorAll(".speed-btn").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
       state.speed = Number(b.dataset.speed);
-      if (state.phase === "playing") {
+      if (state.phase === "playing" && !state.paused) {
         if (state.speed === 0) {
           while (state.reveal && state.playIdx < state.reveal.futureBars.length) stepPlayback();
         } else {
@@ -465,6 +649,14 @@ function wire() {
   });
 
   document.querySelectorAll(".rate-btn").forEach((b) => (b.onclick = () => rate(b.dataset.rating, b)));
+
+  const toggleOverlay = (key) => {
+    state.overlays[key] = !state.overlays[key];
+    localStorage.setItem(LS.overlays, JSON.stringify(state.overlays));
+    if (state.scenario) renderOverlays();
+  };
+  $("ovVwap").onclick = () => toggleOverlay("vwap");
+  $("ovEma").onclick = () => toggleOverlay("ema");
 
   $("settingsBtn").onclick = () => $("settingsPanel").classList.toggle("hidden");
   $("backendUrl").value = state.backend;
@@ -487,6 +679,31 @@ function wire() {
 
   $("cryptoToggle").checked = localStorage.getItem(LS.crypto) !== "false";
   $("cryptoToggle").onchange = () => localStorage.setItem(LS.crypto, $("cryptoToggle").checked);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target.matches("input, select, textarea") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === "n") {
+      newScenario();
+    } else if (state.phase === "loaded") {
+      if (k === "l") selectDirection("LONG");
+      else if (k === "s") selectDirection("SHORT");
+      else if (k === "p") selectDirection("SKIP");
+      else if (e.key === "Enter" && state.direction) commitTrade();
+    } else if (state.phase === "armed" && e.key === " ") {
+      e.preventDefault();
+      play();
+    } else if (state.phase === "playing" && e.key === " ") {
+      e.preventDefault();
+      togglePause();
+    } else if (state.phase === "revealed") {
+      const map = { "1": "GOOD", "2": "NEUTRAL", "3": "BAD" };
+      if (map[k]) {
+        const btn = document.querySelector(`.rate-btn[data-rating="${map[k]}"]`);
+        if (btn) rate(map[k], btn);
+      }
+    }
+  });
 }
 
 async function boot() {
@@ -496,7 +713,7 @@ async function boot() {
   setPhase("idle");
   try {
     await loadSymbols();
-    $("emptyHint").textContent = `${state.symbols.length} instruments loaded — hit NEW SCENARIO`;
+    $("emptyHint").textContent = `${state.symbols.length} instruments loaded — hit NEW SCENARIO (or press N)`;
   } catch {
     $("emptyHint").textContent = "Backend offline. Start it: cd Trade_Replay_Trainer/backend && mvnw spring-boot:run";
     $("settingsPanel").classList.remove("hidden");

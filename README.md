@@ -12,6 +12,14 @@ the full record (both trades, both outcomes in R-multiples, your judgement) is a
 JSONL training log, building the dataset to train a learned policy that will replace the
 baseline behind the same interface.
 
+**Reading the tape:** scenarios come with deep context (up to 10 prior sessions for stocks,
+7 days for crypto) and a view-timeframe switcher — stocks 5m/15m/30m/1h, crypto 15m/1h/4h.
+Replay always steps in base bars, so on a higher timeframe you watch the candle form live.
+Toggleable session-anchored VWAP and EMA 20/50 overlays (the EMAs are exactly what the model
+looks at). Keyboard-first: **N** new scenario, **L/S/P** direction, **Enter** commit,
+**Space** play/pause, **1/2/3** rate. The header tracks session R for you and the model plus
+average **give-back** (peak R surrendered per trade — the metric the live account leaks).
+
 ## Architecture
 
 ```

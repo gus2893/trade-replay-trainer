@@ -27,10 +27,11 @@ import com.gusev.replaytrainer.sim.TradeSpec;
  * Builds random practice windows out of the labs' cached series and holds the
  * per-scenario state. Windowing rules:
  * Stocks (5m RTH bars): pick a random session, cut somewhere between 30 min
- * after the open and one hour before the close; context is the two prior
- * sessions plus the current session up to the cut; the future is the rest of
- * that session.
- * Crypto (15m continuous): 192 context bars (48h), 48 future bars (12h).
+ * after the open and one hour before the close; context is up to ten prior
+ * sessions (at least two) plus the current session up to the cut; the future
+ * is the rest of that session.
+ * Crypto (15m continuous): up to 672 context bars (7 days, min 192),
+ * 48 future bars (12h).
  */
 @Service
 public class ScenarioService {
@@ -39,7 +40,9 @@ public class ScenarioService {
 	private static final int STOCK_MIN_SESSION_BARS = 40;
 	private static final int STOCK_MIN_CUT_OFFSET = 6;
 	private static final int STOCK_MIN_FUTURE_BARS = 12;
-	private static final int CRYPTO_CONTEXT_BARS = 192;
+	private static final int STOCK_MAX_CONTEXT_SESSIONS = 10;
+	private static final int CRYPTO_MIN_CONTEXT_BARS = 192;
+	private static final int CRYPTO_MAX_CONTEXT_BARS = 672;
 	private static final int CRYPTO_FUTURE_BARS = 48;
 	private static final int MAX_STORED_SCENARIOS = 300;
 	private static final int MAX_PICK_ATTEMPTS = 25;
@@ -130,17 +133,18 @@ public class ScenarioService {
 		}
 		int cut = session[0] + STOCK_MIN_CUT_OFFSET
 				+ random.nextInt(maxCutOffset - STOCK_MIN_CUT_OFFSET + 1);
-		return new int[] { sessions.get(s - 2)[0], cut, session[1] };
+		int ctxSession = Math.max(0, s - STOCK_MAX_CONTEXT_SESSIONS);
+		return new int[] { sessions.get(ctxSession)[0], cut, session[1] };
 	}
 
 	private int[] cryptoWindow(List<Bar> bars) {
-		int minCut = CRYPTO_CONTEXT_BARS - 1;
+		int minCut = CRYPTO_MIN_CONTEXT_BARS - 1;
 		int maxCut = bars.size() - 1 - CRYPTO_FUTURE_BARS;
 		if (maxCut <= minCut) {
 			return null;
 		}
 		int cut = minCut + random.nextInt(maxCut - minCut + 1);
-		return new int[] { cut - CRYPTO_CONTEXT_BARS + 1, cut, cut + CRYPTO_FUTURE_BARS };
+		return new int[] { Math.max(0, cut - CRYPTO_MAX_CONTEXT_BARS + 1), cut, cut + CRYPTO_FUTURE_BARS };
 	}
 
 	/** Groups bars into RTH sessions by their New-York-time calendar date. */

@@ -32,6 +32,7 @@
     <span class="stat"><span class="stat-k">TRADES</span><span class="stat-v" id="statTrades">0</span></span>
     <span class="stat"><span class="stat-k">YOU</span><span class="stat-v" id="statYouR">0.0R</span></span>
     <span class="stat"><span class="stat-k">MODEL</span><span class="stat-v" id="statModelR">0.0R</span></span>
+    <span class="stat" title="avg peak R handed back per trade"><span class="stat-k">GIVE-BACK</span><span class="stat-v" id="statGiveback">0.0R</span></span>
   </div>
 </header>
 
@@ -50,6 +51,11 @@
       <div class="symbol-chip" id="symbolChip">
         <span class="chip-symbol" id="chipSymbol">— — —</span>
         <span class="chip-tf" id="chipTf"></span>
+      </div>
+      <div class="tf-group" id="tfGroup"></div>
+      <div class="overlay-group">
+        <button class="ov-btn" id="ovVwap">VWAP</button>
+        <button class="ov-btn" id="ovEma">EMA 20/50</button>
       </div>
       <div class="playback" id="playbackControls">
         <span class="speed-label">SPEED</span>
@@ -86,6 +92,7 @@
       <button class="btn btn-amber wide" id="commitBtn" disabled>COMMIT TRADE</button>
       <button class="btn btn-play wide hidden" id="playBtn">▶ PLAY IT OUT</button>
       <p class="ticket-note" id="ticketNote">Entry fills at the next bar's open — same as the sim ledger.</p>
+      <p class="ticket-note">Keys: <b>N</b> new · <b>L/S/P</b> direction · <b>Enter</b> commit · <b>Space</b> play/pause · <b>1/2/3</b> rate</p>
     </div>
 
     <div class="panel result hidden" id="resultPanel">
